@@ -16,7 +16,7 @@ import type { SpecFile, StudioStage } from "@/lib/sutra/schema";
 import { Button } from "@/components/ui/button";
 import { BrowserPreview } from "@/components/studio/browser-preview";
 import { bootTerminal, TerminalPane } from "@/components/studio/terminal-pane";
-import { ActivityBar, type SidePanel } from "@/components/studio/activity-bar";
+import { ActivityBar } from "@/components/studio/activity-bar";
 import { WelcomePane } from "@/components/studio/welcome-pane";
 import { ChatSidebar } from "@/components/studio/chat-sidebar";
 import { ChatThread } from "@/components/studio/chat-thread";
@@ -28,9 +28,14 @@ import { KeybindingsEditor } from "@/components/studio/keybindings-editor";
 import { OpenFolderDialog } from "@/components/studio/open-folder-dialog";
 import { ScmPanel } from "@/components/studio/scm-panel";
 import { useWorkspace } from "@/components/studio/use-workspace";
+import { BottomPanel } from "@/components/studio/bottom-panel";
+import { StatusBar } from "@/components/studio/status-bar";
+import { CodeEditor } from "@/components/studio/code-editor";
+import { ExplorerTree } from "@/components/studio/explorer-tree";
+import { KiroPanel } from "@/components/studio/kiro-panel";
 import { loadUserBindings, shortcutLabel, type IdeAction, type Keybinding } from "@/lib/sutra/keymap";
 import { saveThemePref } from "@/lib/sutra/theme";
-import { ThemePicker } from "@/components/studio/theme-picker";
+import { DEFAULT_LAYOUT, loadLayout, saveLayout, type SideView, type WorkbenchLayout } from "@/lib/sutra/workbench";
 import { cn } from "@/lib/utils";
 
 const STAGES: { id: StudioStage; label: string }[] = [
@@ -63,16 +68,21 @@ export function StudioApp() {
   } = store;
   const [codeTab, setCodeTab] = useState<"react" | "api">("react");
   const [showExplorer, setShowExplorer] = useState(true);
-  const [side, setSide] = useState<SidePanel>("explorer");
+  const [side, setSide] = useState<SideView>("explorer");
   const [showChat, setShowChat] = useState(true);
   const [showTerm, setShowTerm] = useState(true);
   const [showKeys, setShowKeys] = useState(false);
   const [palette, setPalette] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [find, setFind] = useState<string | null>(null);
+  const [replace, setReplace] = useState<string | null>(null);
+  const [goto, setGoto] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [userKeys, setUserKeys] = useState<Keybinding[]>([]);
   const [zoom, setZoom] = useState(1);
+  const [layout, setLayout] = useState<WorkbenchLayout>(DEFAULT_LAYOUT);
+  const [cursor, setCursor] = useState({ line: 1, col: 1 });
+  const [output, setOutput] = useState("Sutra ready.");
   const ws = useWorkspace();
   const [openTabs, setOpenTabs] = useState<SpecFile[]>([]);
   const files = spec ? generateFiles(spec) : [];
@@ -80,7 +90,16 @@ export function StudioApp() {
   useEffect(() => {
     hydrateChats();
     setUserKeys(loadUserBindings());
+    setLayout(loadLayout());
   }, [hydrateChats]);
+
+  function patchLayout(p: Partial<WorkbenchLayout>) {
+    setLayout((prev) => {
+      const next = { ...prev, ...p };
+      saveLayout(next);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!spec) return;
@@ -192,7 +211,7 @@ export function StudioApp() {
         { label: "Paste", shortcut: "Ctrl+V", onSelect: () => document.execCommand("paste") },
         { sep: true, label: "" },
         { label: "Find", shortcut: shortcutLabel("find", os, userKeys), onSelect: () => setFind("") },
-        { label: "Find in Files", shortcut: shortcutLabel("findInFiles", os, userKeys), onSelect: () => { setSide("search"); setShowExplorer(true); } },
+        { label: "Replace", shortcut: "Ctrl+H", onSelect: () => setReplace("") },
       ],
     },
     {
@@ -206,16 +225,33 @@ export function StudioApp() {
       items: [
         { label: "Command Palette…", shortcut: shortcutLabel("commandPalette", os, userKeys), onSelect: () => setPalette(true) },
         { sep: true, label: "" },
-        { label: "Explorer", onSelect: () => { setSide("explorer"); setShowExplorer(true); } },
-        { label: "Search", onSelect: () => { setSide("search"); setShowExplorer(true); } },
-        { label: "Source Control", onSelect: () => { setSide("scm"); setShowExplorer(true); } },
+        { label: "Explorer", shortcut: "Ctrl+Shift+E", onSelect: () => { setSide("explorer"); patchLayout({ sidebar: true }); setShowExplorer(true); } },
+        { label: "Search", shortcut: "Ctrl+Shift+F", onSelect: () => { setSide("search"); patchLayout({ sidebar: true }); } },
+        { label: "Source Control", shortcut: "Ctrl+Shift+G", onSelect: () => { setSide("scm"); patchLayout({ sidebar: true }); } },
+        { label: "Run and Debug", shortcut: "Ctrl+Shift+D", onSelect: () => { setSide("debug"); patchLayout({ sidebar: true }); } },
+        { label: "Kiro", onSelect: () => { setSide("kiro"); patchLayout({ sidebar: true }); } },
         { label: showChat ? "Hide Agent Focus" : "Show Agent Focus", shortcut: shortcutLabel("toggleChat", os, userKeys), onSelect: () => setShowChat((v) => !v) },
-        { label: showTerm ? "Hide Terminal" : "Show Terminal", shortcut: shortcutLabel("toggleTerminal", os, userKeys), onSelect: () => setShowTerm((v) => !v) },
+        { sep: true, label: "" },
+        { label: "Problems", shortcut: "Ctrl+Shift+M", onSelect: () => { patchLayout({ panel: true, panelTab: "problems" }); setShowTerm(true); } },
+        { label: "Output", onSelect: () => { patchLayout({ panel: true, panelTab: "output" }); setShowTerm(true); } },
+        { label: "Debug Console", onSelect: () => { patchLayout({ panel: true, panelTab: "debug" }); setShowTerm(true); } },
+        { label: "Terminal", shortcut: shortcutLabel("toggleTerminal", os, userKeys), onSelect: () => { patchLayout({ panel: !layout.panel, panelTab: "terminal" }); setShowTerm((v) => !v); } },
+        { sep: true, label: "" },
+        { label: layout.menuBar ? "Hide Menu Bar" : "Show Menu Bar", onSelect: () => patchLayout({ menuBar: !layout.menuBar }) },
+        { label: layout.activityBar ? "Hide Activity Bar" : "Show Activity Bar", onSelect: () => patchLayout({ activityBar: !layout.activityBar }) },
+        { label: layout.sidebar ? "Hide Primary Side Bar" : "Show Primary Side Bar", shortcut: "Ctrl+B", onSelect: () => { patchLayout({ sidebar: !layout.sidebar }); setShowExplorer((v) => !v); } },
+        { label: "Move Primary Side Bar Right", onSelect: () => patchLayout({ sidebarRight: !layout.sidebarRight }) },
+        { label: layout.statusBar ? "Hide Status Bar" : "Show Status Bar", onSelect: () => patchLayout({ statusBar: !layout.statusBar }) },
+        { label: layout.breadcrumbs ? "Hide Breadcrumbs" : "Show Breadcrumbs", onSelect: () => patchLayout({ breadcrumbs: !layout.breadcrumbs }) },
+        { label: layout.zen ? "Exit Zen Mode" : "Zen Mode", shortcut: "Ctrl+K Z", onSelect: () => patchLayout({ zen: !layout.zen }) },
+        { sep: true, label: "" },
+        { label: layout.wordWrap ? "Disable Word Wrap" : "Word Wrap", shortcut: "Alt+Z", onSelect: () => patchLayout({ wordWrap: !layout.wordWrap }) },
+        { label: layout.lineNumbers ? "Hide Line Numbers" : "Show Line Numbers", onSelect: () => patchLayout({ lineNumbers: !layout.lineNumbers }) },
+        { label: layout.split ? "Join Editors" : "Split Editor", shortcut: "Ctrl+\\", onSelect: () => patchLayout({ split: !layout.split }) },
         { sep: true, label: "" },
         { label: "Appearance: System", onSelect: () => saveThemePref("system") },
         { label: "Appearance: Light", onSelect: () => saveThemePref("light") },
         { label: "Appearance: Dark", onSelect: () => saveThemePref("dark") },
-        { sep: true, label: "" },
         { label: "Zoom In", onSelect: () => setZoom((z) => Math.min(1.4, z + 0.1)) },
         { label: "Zoom Out", onSelect: () => setZoom((z) => Math.max(0.8, z - 0.1)) },
         { label: "Toggle Full Screen", shortcut: shortcutLabel("toggleFullscreen", os, userKeys), onSelect: () => void document.documentElement.requestFullscreen?.() },
@@ -228,6 +264,8 @@ export function StudioApp() {
         { label: "Back", shortcut: "Alt+Left", onSelect: () => history.back() },
         { label: "Forward", shortcut: "Alt+Right", onSelect: () => history.forward() },
         { label: "Go to File…", shortcut: shortcutLabel("quickOpen", os, userKeys), onSelect: () => setQuickOpen(true) },
+        { label: "Go to Line/Column…", shortcut: "Ctrl+G", onSelect: () => setGoto("") },
+        { sep: true, label: "" },
         { label: "requirements.md", onSelect: () => spec && openFile("requirements", "requirements") },
         { label: "design.md", onSelect: () => spec && canOpen("design") && openFile("design", "design") },
         { label: "tasks.md", onSelect: () => spec && canOpen("tasks") && openFile("tasks", "tasks") },
@@ -236,7 +274,11 @@ export function StudioApp() {
     {
       id: "run",
       label: "Run",
-      items: [{ label: "Start Debugging / Run Tasks", shortcut: shortcutLabel("runTasks", os, userKeys), onSelect: () => void runTasks() }],
+      items: [
+        { label: "Start Debugging", shortcut: "F5", onSelect: () => { setSide("debug"); setOutput("F5 — running tasks"); void runTasks(); } },
+        { label: "Run Without Debugging", shortcut: "Ctrl+F5", onSelect: () => void runTasks() },
+        { label: "Stop", shortcut: "Shift+F5", onSelect: () => setOutput("Stopped") },
+      ],
     },
     {
       id: "terminal",
@@ -259,7 +301,7 @@ export function StudioApp() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
-      <MenuBar menus={menus} />
+      {layout.menuBar && !layout.zen ? <MenuBar menus={menus} /> : null}
       <div className="flex h-9 items-center gap-2 border-b border-border bg-surface px-2">
         <button type="button" className="px-1 text-subtle" aria-label="Back" onClick={() => history.back()}>
           ←
@@ -286,23 +328,37 @@ export function StudioApp() {
           Agent Focus
         </button>
       </div>
-      <div className="flex min-h-0 flex-1">
+      <div className={cn("flex min-h-0 flex-1", layout.sidebarRight && "flex-row-reverse")}>
+        {layout.activityBar && !layout.zen ? (
         <ActivityBar
           side={side}
           chat={showChat}
+          scmCount={0}
           onSide={(s) => {
             setSide(s);
             setShowExplorer(true);
+            patchLayout({ sidebar: true });
           }}
           onChat={() => setShowChat((v) => !v)}
         />
-        {showExplorer ? (
+        ) : null}
+        {showExplorer && layout.sidebar && !layout.zen ? (
           <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
             {side === "scm" ? (
               <ScmPanel
                 folder={ws.activeFolder}
                 onOpen={(rel) => ws.activeFolder && void ws.openDisk(ws.activeFolder, rel)}
               />
+            ) : side === "debug" ? (
+              <div className="p-3 text-xs text-muted">
+                <p className="text-[11px] tracking-widest text-subtle">RUN AND DEBUG</p>
+                <button type="button" className="mt-2 h-8 rounded-sm bg-accent px-3 text-accent-fg" onClick={() => void runTasks()}>
+                  Start (F5)
+                </button>
+                <p className="mt-2 text-subtle">Variables, watch, and call stack attach when a debug adapter is configured.</p>
+              </div>
+            ) : side === "kiro" ? (
+              <KiroPanel specName={spec?.name} onOpenSpec={() => spec && openFile("requirements", "requirements")} />
             ) : side === "search" ? (
               <div className="flex min-h-0 flex-1 flex-col">
                 <p className="px-3 py-2 text-[11px] font-medium tracking-widest text-subtle">SEARCH</p>
@@ -336,18 +392,11 @@ export function StudioApp() {
                     {ws.activeFolder ? ws.activeFolder.split(/[/\\]/).pop() : spec ? spec.slug : "No folder"}
                   </p>
                   {ws.entries.length ? (
-                    ws.entries
-                      .filter((e) => !e.dir)
-                      .map((e) => (
-                        <TreeItem
-                          key={e.path}
-                          active={ws.activeDoc === `${ws.activeFolder}::${e.path}`}
-                          locked={false}
-                          onClick={() => ws.activeFolder && void ws.openDisk(ws.activeFolder, e.path)}
-                        >
-                          {e.path}
-                        </TreeItem>
-                      ))
+                    <ExplorerTree
+                      entries={ws.entries}
+                      active={ws.activeDoc?.split("::")[1]}
+                      onOpen={(rel) => ws.activeFolder && void ws.openDisk(ws.activeFolder, rel)}
+                    />
                   ) : spec ? (
                     <SpecTree
                       file={file}
@@ -439,13 +488,55 @@ export function StudioApp() {
                 />
               </div>
             ) : null}
+            {replace !== null ? (
+              <div className="flex items-center gap-2 border-b border-border px-3 py-1">
+                <input className="h-8 flex-1 bg-transparent text-sm outline-none" placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} />
+                <button type="button" className="text-xs" onClick={() => { if (replace && find) ws.editDoc((ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? "").replaceAll(find, replace)); }}>Replace all</button>
+              </div>
+            ) : null}
+            {goto !== null ? (
+              <div className="flex items-center gap-2 border-b border-border px-3 py-1">
+                <input
+                  autoFocus
+                  className="h-8 flex-1 bg-transparent text-sm outline-none"
+                  placeholder="Go to line"
+                  value={goto}
+                  onChange={(e) => setGoto(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      setCursor({ line: Number(goto) || 1, col: 1 });
+                      setGoto(null);
+                    }
+                    if (e.key === "Escape") setGoto(null);
+                  }}
+                />
+              </div>
+            ) : null}
+            {layout.breadcrumbs && !layout.zen ? (
+              <p className="truncate border-b border-border px-3 py-1 text-[11px] text-subtle">
+                {ws.activeFolder?.split(/[/\\]/).slice(-2).join(" / ") || "workspace"}
+                {ws.activeDoc ? ` / ${ws.activeDoc.split("::")[1]}` : spec ? ` / ${spec.slug}` : ""}
+              </p>
+            ) : null}
             {ws.activeDoc ? (
-              <textarea
-                className="min-h-0 flex-1 resize-none bg-bg p-4 font-mono text-sm outline-none"
-                style={{ fontSize: `${13 * zoom}px` }}
-                value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
-                onChange={(e) => ws.editDoc(e.target.value)}
-              />
+              <div className={cn("flex min-h-0 flex-1", layout.split && "gap-px bg-border")}>
+                <CodeEditor
+                  value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
+                  onChange={(v) => ws.editDoc(v)}
+                  find={find ?? ""}
+                  wrap={layout.wordWrap}
+                  lineNumbers={layout.lineNumbers}
+                  onCursor={(line, col) => setCursor({ line, col })}
+                />
+                {layout.split ? (
+                  <CodeEditor
+                    value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
+                    onChange={(v) => ws.editDoc(v)}
+                    wrap={layout.wordWrap}
+                    lineNumbers={layout.lineNumbers}
+                  />
+                ) : null}
+              </div>
             ) : openTabs.length === 0 && !spec ? (
               <WelcomePane
                 onCommand={(label) => {
@@ -481,23 +572,25 @@ export function StudioApp() {
               />
             )}
           </div>
-          {showTerm ? (
-            <div className="h-40 shrink-0 border-t border-border">
-              <div className="flex h-7 items-center gap-2 border-b border-border px-2 text-xs text-subtle">
-                <span className="rounded-sm bg-raised px-2 py-0.5 text-fg">Sutra — MCP Logs</span>
-                <span className="flex-1" />
-                <button type="button" onClick={() => setShowTerm(false)} className="px-1">
-                  <X className="size-3.5" />
-                </button>
-              </div>
-              <div className="h-[calc(10rem-1.75rem)]">
-                <TerminalPane compact />
-              </div>
-            </div>
+          {(showTerm || layout.panel) && !layout.zen ? (
+            <BottomPanel
+              tab={layout.panelTab}
+              onTab={(t) => patchLayout({ panelTab: t, panel: true })}
+              onClose={() => {
+                patchLayout({ panel: false });
+                setShowTerm(false);
+              }}
+              problems={
+                ws.activeFolder
+                  ? []
+                  : [{ file: "workspace", message: "No folder opened", severity: "warning" as const }]
+              }
+              output={output}
+            />
           ) : null}
         </section>
 
-        {showChat ? (
+        {showChat && !layout.zen ? (
           <aside className="flex w-[22rem] shrink-0 flex-col border-l border-border lg:w-[24rem]">
             <div className="flex h-9 items-center border-b border-border">
               <p className="px-3 text-xs text-fg">New Session</p>
@@ -513,15 +606,23 @@ export function StudioApp() {
           </aside>
         ) : null}
       </div>
-      <footer className="flex h-6 items-center gap-4 overflow-x-auto border-t border-border bg-[var(--color-activity)] px-3 font-mono text-[11px] text-subtle">
-        <span>{os === "macos" ? "macOS" : "Windows"}</span>
-        {spec ? <span>{stackLabel(spec.stack)}</span> : <span>Ready</span>}
-        {saved ? <span className="text-ok">Saved</span> : null}
-        {ws.notice ? <span className="text-ok">{ws.notice}</span> : null}
-        {ws.activeFolder ? <span className="truncate">{ws.activeFolder}</span> : null}
-        <span className="flex-1" />
-        <ThemePicker compact />
-      </footer>
+      {layout.statusBar && !layout.zen ? (
+        <StatusBar
+          os={os === "macos" ? "macOS" : "Windows"}
+          branch={undefined}
+          errors={0}
+          warnings={ws.activeFolder ? 0 : 1}
+          line={cursor.line}
+          col={cursor.col}
+          language={ws.activeDoc?.split(".").pop() ?? spec?.stack ?? "plaintext"}
+          notice={ws.notice ?? (saved ? "Saved" : null)}
+          onProblems={() => patchLayout({ panel: true, panelTab: "problems" })}
+          onScm={() => {
+            setSide("scm");
+            patchLayout({ sidebar: true });
+          }}
+        />
+      ) : null}
       {showKeys ? <ShortcutsHelp os={os} onClose={() => setShowKeys(false)} /> : null}
       {ws.folderMode ? (
         <OpenFolderDialog

@@ -1,19 +1,20 @@
 import type { ReactNode } from "react";
-import { Blocks, Folder, GitBranch, Search, Settings, Sparkles } from "lucide-react";
+import { Blocks, Bug, Folder, GitBranch, Search, Settings, Sparkles, Waypoints } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
+import type { SideView } from "@/lib/sutra/workbench";
 import { cn } from "@/lib/utils";
-
-export type SidePanel = "explorer" | "search" | "scm" | "chat";
 
 export function ActivityBar({
   side,
   chat,
+  scmCount,
   onSide,
   onChat,
 }: {
-  side: SidePanel;
+  side: SideView;
   chat: boolean;
-  onSide: (s: SidePanel) => void;
+  scmCount?: number;
+  onSide: (s: SideView) => void;
   onChat: () => void;
 }) {
   const navigate = useNavigate();
@@ -25,8 +26,14 @@ export function ActivityBar({
       <IconBtn label="Search" active={side === "search"} onClick={() => onSide("search")}>
         <Search className="size-5" />
       </IconBtn>
-      <IconBtn label="Source Control" active={side === "scm"} onClick={() => onSide("scm")}>
+      <IconBtn label="Source Control" active={side === "scm"} onClick={() => onSide("scm")} badge={scmCount}>
         <GitBranch className="size-5" />
+      </IconBtn>
+      <IconBtn label="Run and Debug" active={side === "debug"} onClick={() => onSide("debug")}>
+        <Bug className="size-5" />
+      </IconBtn>
+      <IconBtn label="Kiro" active={side === "kiro"} onClick={() => onSide("kiro")}>
+        <Waypoints className="size-5" />
       </IconBtn>
       <IconBtn label="Agent Focus" active={chat} onClick={onChat}>
         <Sparkles className="size-5" />
@@ -46,11 +53,13 @@ function IconBtn({
   label,
   active,
   onClick,
+  badge,
   children,
 }: {
   label: string;
   active?: boolean;
   onClick?: () => void;
+  badge?: number;
   children: ReactNode;
 }) {
   return (
@@ -60,11 +69,14 @@ function IconBtn({
       aria-label={label}
       onClick={onClick}
       className={cn(
-        "flex h-11 w-12 items-center justify-center text-subtle hover:text-fg",
+        "relative flex h-11 w-12 items-center justify-center text-subtle hover:text-fg",
         active && "border-l-2 border-accent text-fg",
       )}
     >
       {children}
+      {badge ? (
+        <span className="absolute top-1 right-1 min-w-3 rounded-full bg-accent px-1 text-[9px] text-accent-fg">{badge}</span>
+      ) : null}
     </button>
   );
 }

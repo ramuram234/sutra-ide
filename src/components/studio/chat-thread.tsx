@@ -273,7 +273,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={folder ? "Ask Sutra Code to read, edit, or run…" : "Ask a question or describe a task…"}
+            placeholder={folder ? "Ask Sutra Code…  #file  #folder  #codebase" : "Ask a question or describe a task…"}
             className="min-h-16 border-0 bg-transparent shadow-none"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
