@@ -3,6 +3,8 @@ import { ArrowUp, Bug, FileText, ListTodo, Loader2, Zap } from "lucide-react";
 import { generateModuleSpec } from "@/lib/sutra/generate";
 import { runAgent, type AgentPending, type AgentTrace } from "@/lib/sutra/agent-loop";
 import { AGENT_MODES, nextAgentMode, type AgentMode } from "@/lib/sutra/agent-modes";
+import { initSutraMd, listSkills, rewindFile } from "@/lib/sutra/claude-memory";
+import { parseSlash, SLASH } from "@/lib/sutra/slash";
 import { PRESETS } from "@/lib/sutra/presets";
 import { proposeCommand } from "@/lib/sutra/permissions";
 import { stackLabel } from "@/lib/sutra/codegen";
@@ -30,6 +32,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
   const busy = useSutra((s) => s.busy);
   const error = useSutra((s) => s.error);
   const addMessage = useSutra((s) => s.addMessage);
+  const newChatTab = useSutra((s) => s.newChatTab);
   const setBusy = useSutra((s) => s.setBusy);
   const setError = useSutra((s) => s.setError);
   const setSpec = useSutra((s) => s.setSpec);
@@ -101,6 +104,64 @@ export function ChatThread({ folder }: { folder?: string | null }) {
     setDraft("");
     addMessage({ role: "user", text: prompt });
     setError(null);
+
+    const slash = parseSlash(prompt);
+    if (slash) {
+      if (slash.cmd === "help") {
+        addMessage({
+          role: "assistant",
+          text: `Claude Code-style slash commands\n${SLASH.map((s) => `${s.cmd}  — ${s.hint}`).join("\n")}\n\nShift+Tab cycles Plan / Manual / Accept edits / Auto.`,
+        });
+        return;
+      }
+      if (slash.cmd === "clear") {
+        newChatTab();
+        return;
+      }
+      if (slash.cmd === "plan") {
+        setMode("plan");
+        addMessage({ role: "assistant", text: "Plan mode on. I will only read and propose — no file edits until you switch mode." });
+        return;
+      }
+      if (slash.cmd === "compact") {
+        addMessage({ role: "assistant", text: "Context compacted. Ask me to continue; I will not replay old tool traces." });
+        return;
+      }
+      if (slash.cmd === "model") {
+        addMessage({ role: "assistant", text: `Active model: ${loadPlatform().defaultModelId}` });
+        return;
+      }
+      if (slash.cmd === "init") {
+        if (!folder) {
+          addMessage({ role: "assistant", text: "Open a folder first, then /init." });
+          return;
+        }
+        const r = await initSutraMd({ data: { folder } });
+        addMessage({ role: "assistant", text: `Wrote ${r.path}. Same job as Claude Code CLAUDE.md — loaded every turn.` });
+        return;
+      }
+      if (slash.cmd === "doctor") {
+        const skills = folder ? await listSkills({ data: { folder } }) : [];
+        addMessage({
+          role: "assistant",
+          text: `Folder: ${folder || "(none)"}\nModel: ${loadPlatform().defaultModelId}\nMode: ${mode}\nSkills: ${skills.length ? skills.join(", ") : "none (.sutra/skills/*/SKILL.md)"}`,
+        });
+        return;
+      }
+      if (slash.cmd === "rewind") {
+        if (!folder || !slash.arg) {
+          addMessage({ role: "assistant", text: "Usage: /rewind path/to/file.ts" });
+          return;
+        }
+        try {
+          const r = await rewindFile({ data: { folder, rel: slash.arg } });
+          addMessage({ role: "assistant", text: `Restored ${r.restored} from checkpoint.` });
+        } catch {
+          addMessage({ role: "assistant", text: "No checkpoint for that file yet." });
+        }
+        return;
+      }
+    }
 
     if (folder) {
       await agent(prompt);
@@ -273,7 +334,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder={folder ? "Ask Sutra Code…  #file  #folder  #codebase" : "Ask a question or describe a task…"}
+            placeholder={folder ? "Ask Sutra Code…  /help  /init  #file" : "Ask a question or describe a task…"}
             className="min-h-16 border-0 bg-transparent shadow-none"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

@@ -145,6 +145,14 @@ async function execTool(
   if (name === "write" || name === "edit") {
     if (mode === "plan") return { ok: false, detail: "Plan mode cannot edit files. Switch to Manual / Accept edits / Auto." };
     if (!canAutoWrite(mode) && !approved) return { ok: true, detail: "", pending: { name, args } };
+    try {
+      const cur = await readWorkspaceFile({ data: { folder, rel } });
+      await writeWorkspaceFile({
+        data: { folder, rel: `.sutra/checkpoints/${rel.replaceAll("/", "__")}.bak`, content: cur.content },
+      });
+    } catch {
+      /* new file */
+    }
     if (name === "write") {
       await writeWorkspaceFile({ data: { folder, rel, content: args.content || "" } });
       return { ok: true, detail: `Wrote ${rel}` };
