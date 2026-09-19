@@ -1,0 +1,39 @@
+appId: dev.sutra.ide
+productName: Sutra
+copyright: Sutra
+directories:
+  output: release
+  buildResources: desktop/icons
+files:
+  - desktop/**
+  - package.json
+  - scripts/with-app-env.mjs
+  - scripts/app-env-plugin.mjs
+  - vite.config.ts
+  - src/**/*
+  - public/**/*
+  - server/**/*
+  - .vercel/output/**/*
+  - "!node_modules/.cache/**"
+extraMetadata:
+  main: desktop/main.mjs
+win:
+  target:
+    - nsis
+    - portable
+  artifactName: Sutra-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Sutra
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+  artifactName: Sutra-${version}-mac.${ext}
+linux:
+  target:
+    - AppImage
+  artifactName: Sutra-${version}.AppImage

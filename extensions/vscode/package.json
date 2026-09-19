@@ -1,0 +1,36 @@
+{
+  "name": "sutra-ide",
+  "displayName": "Sutra",
+  "description": "Spec-driven AI coding: requirements, design, tasks, then generate. Windows and macOS.",
+  "version": "0.1.0",
+  "publisher": "sutra",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "sutra.writeSpecs", "title": "Sutra: Write specs" },
+      { "command": "sutra.runTasks", "title": "Sutra: Run tasks" },
+      { "command": "sutra.runInTerminal", "title": "Sutra: Run command in terminal" }
+    ],
+    "keybindings": [
+      { "command": "sutra.writeSpecs", "key": "ctrl+shift+s", "mac": "cmd+shift+s" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "sutra", "title": "Sutra", "icon": "media/sutra.svg" }]
+    },
+    "views": {
+      "sutra": [{ "id": "sutra.specs", "name": "Specs" }]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "package": "npm run compile && vsce package --allow-missing-repository --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.7.0"
+  }
+}

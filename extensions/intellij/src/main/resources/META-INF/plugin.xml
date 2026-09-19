@@ -1,0 +1,23 @@
+<idea-plugin>
+  <id>dev.sutra.ide</id>
+  <name>Sutra</name>
+  <vendor>Sutra</vendor>
+  <description>Spec-driven AI coding for IntelliJ IDEA and WebStorm on Windows and macOS.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>org.jetbrains.plugins.terminal</depends>
+  <actions>
+    <action id="Sutra.WriteSpecs" class="dev.sutra.WriteSpecsAction"
+            text="Sutra: Write specs" description="Generate requirements.md">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control shift S"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift S"/>
+    </action>
+    <action id="Sutra.RunTerminal" class="dev.sutra.RunTerminalAction"
+            text="Sutra: Run command in terminal" description="Execute in cmd.exe or Terminal">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Sutra" anchor="right" factoryClass="dev.sutra.SutraToolWindow"/>
+  </extensions>
+</idea-plugin>
