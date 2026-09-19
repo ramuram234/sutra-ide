@@ -36,6 +36,8 @@ import { KiroPanel } from "@/components/studio/kiro-panel";
 import { loadUserBindings, shortcutLabel, type IdeAction, type Keybinding } from "@/lib/sutra/keymap";
 import { saveThemePref } from "@/lib/sutra/theme";
 import { DEFAULT_LAYOUT, loadLayout, saveLayout, type SideView, type WorkbenchLayout } from "@/lib/sutra/workbench";
+import { debugLaunch, debugStop } from "@/lib/sutra/dap";
+import type { Marker } from "@/components/studio/code-editor";
 import { cn } from "@/lib/utils";
 
 const STAGES: { id: StudioStage; label: string }[] = [
@@ -83,6 +85,8 @@ export function StudioApp() {
   const [layout, setLayout] = useState<WorkbenchLayout>(DEFAULT_LAYOUT);
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
   const [output, setOutput] = useState("Sutra ready.");
+  const [markers, setMarkers] = useState<Marker[]>([]);
+  const [debugPid, setDebugPid] = useState(0);
   const ws = useWorkspace();
   const [openTabs, setOpenTabs] = useState<SpecFile[]>([]);
   const files = spec ? generateFiles(spec) : [];
@@ -136,6 +140,25 @@ export function StudioApp() {
     await bootTerminal(spec.slug, os, generateFiles(spec));
   }
 
+  async function startDebug() {
+    setSide("debug");
+    patchLayout({ panel: true, panelTab: "debug" });
+    if (!ws.activeFolder) {
+      setOutput("Open a folder, then F5 to start the Node debug adapter.");
+      return;
+    }
+    const rel =
+      ws.activeDoc?.split("::")[1] ??
+      ws.entries.find((e) => /\.(js|mjs|cjs|ts)$/.test(e.path))?.path;
+    if (!rel) {
+      setOutput("Open a .js or .ts file to debug.");
+      return;
+    }
+    const r = await debugLaunch({ data: { folder: ws.activeFolder, file: rel } });
+    setDebugPid(r.pid);
+    setOutput(r.log);
+  }
+
   useIdeShortcuts(
     os,
     {
@@ -144,7 +167,7 @@ export function StudioApp() {
       toggleExplorer: () => setShowExplorer((v) => !v),
       toggleChat: () => setShowChat((v) => !v),
       toggleTerminal: () => setShowTerm((v) => !v),
-      runTasks: () => void runTasks(),
+      runTasks: () => void (ws.activeFolder ? startDebug() : runTasks()),
       showShortcuts: () => setShowKeys((v) => !v),
       commandPalette: () => setPalette(true),
       showKeybindings: () => openFile("keybindings", spec ? stage : "prompt"),
@@ -352,10 +375,28 @@ export function StudioApp() {
             ) : side === "debug" ? (
               <div className="p-3 text-xs text-muted">
                 <p className="text-[11px] tracking-widest text-subtle">RUN AND DEBUG</p>
-                <button type="button" className="mt-2 h-8 rounded-sm bg-accent px-3 text-accent-fg" onClick={() => void runTasks()}>
+                <p className="mt-2 text-subtle">DAP: launches Node with --inspect-brk on the active file (same protocol VS Code uses).</p>
+                <button
+                  type="button"
+                  className="mt-2 h-8 rounded-sm bg-accent px-3 text-accent-fg"
+                  onClick={() => void startDebug()}
+                >
                   Start (F5)
                 </button>
-                <p className="mt-2 text-subtle">Variables, watch, and call stack attach when a debug adapter is configured.</p>
+                {debugPid ? (
+                  <button
+                    type="button"
+                    className="ml-2 h-8 rounded-sm bg-raised px-3"
+                    onClick={() => {
+                      void debugStop({ data: { pid: debugPid } });
+                      setDebugPid(0);
+                      setOutput("Debug stopped");
+                    }}
+                  >
+                    Stop
+                  </button>
+                ) : null}
+                <p className="mt-2 font-mono text-[11px] text-subtle">{debugPid ? `pid ${debugPid}  127.0.0.1:9229` : "Not running"}</p>
               </div>
             ) : side === "kiro" ? (
               <KiroPanel specName={spec?.name} onOpenSpec={() => spec && openFile("requirements", "requirements")} />
@@ -521,19 +562,24 @@ export function StudioApp() {
             {ws.activeDoc ? (
               <div className={cn("flex min-h-0 flex-1", layout.split && "gap-px bg-border")}>
                 <CodeEditor
+                  path={ws.activeDoc?.split("::")[1]}
                   value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
                   onChange={(v) => ws.editDoc(v)}
-                  find={find ?? ""}
                   wrap={layout.wordWrap}
                   lineNumbers={layout.lineNumbers}
+                  minimap={layout.minimap}
+                  extraFiles={ws.docs.map((d) => ({ path: d.rel, content: d.content }))}
                   onCursor={(line, col) => setCursor({ line, col })}
+                  onMarkers={setMarkers}
                 />
                 {layout.split ? (
                   <CodeEditor
+                    path={ws.activeDoc?.split("::")[1]}
                     value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
                     onChange={(v) => ws.editDoc(v)}
                     wrap={layout.wordWrap}
                     lineNumbers={layout.lineNumbers}
+                    minimap={false}
                   />
                 ) : null}
               </div>
@@ -581,9 +627,11 @@ export function StudioApp() {
                 setShowTerm(false);
               }}
               problems={
-                ws.activeFolder
-                  ? []
-                  : [{ file: "workspace", message: "No folder opened", severity: "warning" as const }]
+                markers.length
+                  ? markers.map((m) => ({ file: `${m.file}:${m.line}`, message: m.message, severity: m.severity }))
+                  : ws.activeFolder
+                    ? []
+                    : [{ file: "workspace", message: "No folder opened", severity: "warning" as const }]
               }
               output={output}
             />
@@ -610,8 +658,8 @@ export function StudioApp() {
         <StatusBar
           os={os === "macos" ? "macOS" : "Windows"}
           branch={undefined}
-          errors={0}
-          warnings={ws.activeFolder ? 0 : 1}
+          errors={markers.filter((m) => m.severity === "error").length}
+          warnings={markers.filter((m) => m.severity === "warning").length + (ws.activeFolder ? 0 : 1)}
           line={cursor.line}
           col={cursor.col}
           language={ws.activeDoc?.split(".").pop() ?? spec?.stack ?? "plaintext"}
@@ -635,25 +683,23 @@ export function StudioApp() {
       {palette ? (
         <CommandPalette
           onClose={() => setPalette(false)}
-          onRun={(id: IdeAction) => {
-            if (id === "commandPalette") return;
+          onRun={(id, mapsTo) => {
             const map: Partial<Record<IdeAction, () => void>> = {
               newChat: () => newChatTab(),
               closeEditor: () => setOpenTabs((t) => t.filter((x) => x !== file)),
               toggleExplorer: () => setShowExplorer((v) => !v),
               toggleChat: () => setShowChat((v) => !v),
               toggleTerminal: () => setShowTerm((v) => !v),
-              runTasks: () => void runTasks(),
+              runTasks: () => void (ws.activeFolder ? startDebug() : runTasks()),
               showShortcuts: () => setShowKeys(true),
               showKeybindings: () => openFile("keybindings", spec ? stage : "prompt"),
               quickOpen: () => setQuickOpen(true),
-              save: () => {
-        void ws.saveDoc().then((ok) => {
-          if (ok) setSaved(true);
-        });
-      },
+              save: () => void ws.saveDoc().then((ok) => ok && setSaved(true)),
               find: () => setFind(""),
-              findInFiles: () => setPalette(true),
+              findInFiles: () => {
+                setSide("search");
+                patchLayout({ sidebar: true });
+              },
               showSettings: () => {
                 window.location.href = "/settings";
               },
@@ -662,7 +708,29 @@ export function StudioApp() {
                 else void document.documentElement.requestFullscreen();
               },
             };
-            map[id]?.();
+            if (mapsTo) {
+              map[mapsTo]?.();
+              return;
+            }
+            if (id.includes("files.openFolder")) void ws.openFolder();
+            if (id.includes("openFile")) void ws.openFileDialog();
+            if (id.includes("newFile")) void ws.newFile();
+            if (id.includes("ZenMode")) patchLayout({ zen: !layout.zen });
+            if (id.includes("WordWrap")) patchLayout({ wordWrap: !layout.wordWrap });
+            if (id.includes("Minimap")) patchLayout({ minimap: !layout.minimap });
+            if (id.includes("splitEditor")) patchLayout({ split: !layout.split });
+            if (id.includes("gotoLine")) setGoto("");
+            if (id.includes("view.explorer")) setSide("explorer");
+            if (id.includes("view.search")) setSide("search");
+            if (id.includes("view.scm")) setSide("scm");
+            if (id.includes("view.debug")) setSide("debug");
+            if (id.includes("kiro")) setSide("kiro");
+            if (id.includes("extensions")) window.location.href = "/extensions";
+            if (id.includes("debug.start") || id.endsWith("debug.run")) void startDebug();
+            if (id.includes("debug.stop") && debugPid) {
+              void debugStop({ data: { pid: debugPid } });
+              setDebugPid(0);
+            }
           }}
         />
       ) : null}

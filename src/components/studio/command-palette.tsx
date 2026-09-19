@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { ACTION_META, type IdeAction } from "@/lib/sutra/keymap";
+import { searchCommands } from "@/lib/sutra/commands";
+import type { IdeAction } from "@/lib/sutra/keymap";
 import { Input } from "@/components/ui/input";
 
 export function CommandPalette({
   onRun,
   onClose,
 }: {
-  onRun: (id: IdeAction) => void;
+  onRun: (id: string, mapsTo?: IdeAction) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
-  const items = useMemo(() => {
-    const t = q.toLowerCase();
-    return ACTION_META.filter((a) => !t || a.label.toLowerCase().includes(t) || a.id.includes(t));
-  }, [q]);
+  const items = useMemo(() => searchCommands(q), [q]);
 
   useEffect(() => {
     setI(0);
@@ -42,7 +40,7 @@ export function CommandPalette({
               setI((n) => Math.max(0, n - 1));
             }
             if (e.key === "Enter" && items[i]) {
-              onRun(items[i]!.id);
+              onRun(items[i]!.id, items[i]!.mapsTo);
               onClose();
             }
           }}
@@ -52,17 +50,17 @@ export function CommandPalette({
             <li key={a.id}>
               <button
                 type="button"
-                className={`flex h-9 w-full items-center justify-between px-3 text-left text-sm ${
+                className={`flex h-9 w-full items-center justify-between gap-4 px-3 text-left text-sm ${
                   idx === i ? "bg-surface" : ""
                 }`}
                 onMouseEnter={() => setI(idx)}
                 onClick={() => {
-                  onRun(a.id);
+                  onRun(a.id, a.mapsTo);
                   onClose();
                 }}
               >
                 <span>{a.label}</span>
-                <span className="text-xs text-subtle">{a.category}</span>
+                <span className="shrink-0 text-[10px] text-subtle">{a.category}</span>
               </button>
             </li>
           ))}

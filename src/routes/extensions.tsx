@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppHeader } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   INTELLIJ_ACTION,
   INTELLIJ_PLUGIN,
@@ -10,6 +11,7 @@ import {
   VSCODE_EXT,
   VSCODE_PACKAGE,
 } from "@/lib/sutra/extension-source";
+import { searchMarketplace, type MarketExt } from "@/lib/sutra/marketplace";
 
 export const Route = createFileRoute("/extensions")({ component: ExtensionsPage });
 
@@ -19,65 +21,82 @@ function ExtensionsPage() {
     [],
   );
   const chord = isMac ? "⌘⇧S" : "Ctrl+Shift+S";
-  const [tab, setTab] = useState<"vscode" | "intellij">("vscode");
+  const [tab, setTab] = useState<"market" | "vscode" | "intellij">("market");
+  const [q, setQ] = useState("python");
+  const [hits, setHits] = useState<MarketExt[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  async function search(query: string) {
+    setBusy(true);
+    try {
+      setHits(await searchMarketplace({ data: { query } }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void search("python");
+  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <AppHeader active="extensions" />
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-10 md:px-6">
         <div>
-          <p className="font-display text-3xl tracking-tight">VS Code and JetBrains</p>
+          <p className="font-display text-3xl tracking-tight">Extensions</p>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-            Same chats, specs, and command approval as Studio. History and tabs live in the IDE; the
-            extension runs shell on your Windows or Mac laptop after Allow / Allow this workspace / Deny.
+            Marketplace search (Open VSX). Sutra-native extensions run here. VS Code VSIX needs an extension host —
+            use the Sutra VS Code / IntelliJ add-ons for that.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
+            <Badge>Open VSX</Badge>
             <Badge>Windows</Badge>
             <Badge>macOS</Badge>
             <Badge tone="accent">Write specs {chord}</Badge>
           </div>
         </div>
 
-        <section className="grid gap-3 sm:grid-cols-2">
-          <article className="rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-            <p className="text-sm font-medium">Sutra for VS Code</p>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
-              Sidebar: specs. Command palette writes specs and runs commands in the integrated terminal
-              (cmd.exe on Windows, zsh on macOS).
-            </p>
-            <p className="mt-3 font-mono text-xs text-subtle">
-              GitHub → Actions → vscode-vsix, then Install from VSIX
-            </p>
-          </article>
-          <article className="rounded-lg bg-raised p-4 shadow-[var(--shadow-border)]">
-            <p className="text-sm font-medium">Sutra for IntelliJ</p>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
-              Tool window plus “Run command in terminal” — uses cmd.exe or macOS Terminal from the IDE.
-            </p>
-            <p className="mt-3 font-mono text-xs text-subtle">
-              GitHub → Actions → intellij-plugin → Install Plugin from Disk
-            </p>
-          </article>
-        </section>
-
         <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === "vscode" ? "default" : "secondary"}
-            onClick={() => setTab("vscode")}
-          >
-            VS Code source
-          </Button>
-          <Button
-            size="sm"
-            variant={tab === "intellij" ? "default" : "secondary"}
-            onClick={() => setTab("intellij")}
-          >
-            JetBrains source
-          </Button>
+          {(["market", "vscode", "intellij"] as const).map((t) => (
+            <Button key={t} size="sm" variant={tab === t ? "default" : "secondary"} onClick={() => setTab(t)}>
+              {t === "market" ? "Marketplace" : t === "vscode" ? "VS Code host" : "JetBrains host"}
+            </Button>
+          ))}
         </div>
 
-        {tab === "vscode" ? (
+        {tab === "market" ? (
+          <div className="grid gap-3">
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void search(q);
+              }}
+            >
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Open VSX" />
+              <Button type="submit" disabled={busy}>
+                Search
+              </Button>
+            </form>
+            {hits.map((e) => (
+              <article key={e.id} className="rounded-md bg-raised p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{e.name}</p>
+                  <Badge>{e.sutra ? "Sutra" : "VS Code"}</Badge>
+                </div>
+                <p className="text-xs text-subtle">{e.publisher}</p>
+                <p className="mt-1 text-xs text-muted">{e.description}</p>
+                <p className="mt-2 text-[11px] text-subtle">
+                  {e.sutra
+                    ? "Runs in Sutra (snippets / keywords / theme)."
+                    : "VSIX — install in VS Code, or wait for Sutra extension host."}{" "}
+                  {e.downloads ? `${e.downloads.toLocaleString()} downloads` : ""}
+                </p>
+              </article>
+            ))}
+          </div>
+        ) : tab === "vscode" ? (
           <div className="grid gap-4">
             <CodeBlock filename="package.json" code={VSCODE_PACKAGE} />
             <CodeBlock filename="src/extension.ts" code={VSCODE_EXT} />
@@ -89,11 +108,6 @@ function ExtensionsPage() {
             <CodeBlock filename="src/main/java/dev/sutra/RunTerminalAction.java" code={INTELLIJ_TERMINAL} />
           </div>
         )}
-
-        <p className="text-xs text-subtle">
-          These are starter manifests for your own build. Point the generate call at your hosted model the same way
-          Studio does. Open a project folder, run Write specs, then approve design and tasks in the spec files.
-        </p>
       </main>
     </div>
   );

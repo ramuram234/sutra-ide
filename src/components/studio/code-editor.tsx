@@ -1,63 +1,159 @@
-import { useMemo, useRef, useState } from "react";
-import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState } from "react";
+import Editor, { loader, type OnMount } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
+import { languageFromPath, KEYWORD_COMPLETIONS } from "@/lib/sutra/languages";
+import { loadThemePref, resolvedTheme } from "@/lib/sutra/theme";
+
+let monacoReady = false;
+
+function bootMonaco(monaco: typeof import("monaco-editor")) {
+  if (monacoReady) return;
+  monacoReady = true;
+  monaco.editor.defineTheme("sutra-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [],
+    colors: {
+      "editor.background": "#1a1a22",
+      "editor.foreground": "#e8e8f0",
+      "editorLineNumber.foreground": "#6b6b7a",
+    },
+  });
+  monaco.editor.defineTheme("sutra-light", {
+    base: "vs",
+    inherit: true,
+    rules: [],
+    colors: { "editor.background": "#f3f3f6" },
+  });
+  const tsLang = monaco.languages as typeof monaco.languages & {
+    typescript?: {
+      typescriptDefaults: { setCompilerOptions: (o: object) => void };
+      javascriptDefaults: { setDiagnosticsOptions: (o: object) => void };
+      JsxEmit: { ReactJSX: number };
+      ScriptTarget: { ES2022: number };
+      ModuleResolutionKind: { NodeJs: number };
+    };
+  };
+  const ts = tsLang.typescript;
+  if (ts) {
+    ts.typescriptDefaults.setCompilerOptions({
+      jsx: ts.JsxEmit.ReactJSX,
+      allowJs: true,
+      target: ts.ScriptTarget.ES2022,
+      moduleResolution: ts.ModuleResolutionKind.NodeJs,
+    });
+    ts.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: false });
+  }
+  for (const [lang, words] of Object.entries(KEYWORD_COMPLETIONS)) {
+    monaco.languages.registerCompletionItemProvider(lang, {
+      provideCompletionItems(model, position) {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        return {
+          suggestions: words.map((w) => ({
+            label: w,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: w,
+            range,
+          })),
+        };
+      },
+    });
+  }
+}
+
+export type Marker = { file: string; message: string; severity: "error" | "warning"; line: number };
 
 export function CodeEditor({
+  path,
   value,
   onChange,
-  find = "",
   wrap,
   lineNumbers,
+  minimap,
   onCursor,
+  onMarkers,
+  extraFiles,
 }: {
+  path?: string;
   value: string;
   onChange: (v: string) => void;
-  find?: string;
   wrap?: boolean;
   lineNumbers?: boolean;
+  minimap?: boolean;
   onCursor?: (line: number, col: number) => void;
+  onMarkers?: (m: Marker[]) => void;
+  extraFiles?: { path: string; content: string }[];
 }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const lines = useMemo(() => value.split("\n"), [value]);
-  const [line, setLine] = useState(1);
+  const [client, setClient] = useState(false);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const lang = languageFromPath(path ?? "file.ts");
+  const theme = resolvedTheme(loadThemePref()) === "light" ? "sutra-light" : "sutra-dark";
 
-  function updateCursor() {
-    const el = ref.current;
-    if (!el) return;
-    const pos = el.selectionStart;
-    const before = value.slice(0, pos);
-    const ln = before.split("\n").length;
-    const col = pos - before.lastIndexOf("\n");
-    setLine(ln);
-    onCursor?.(ln, col);
+  useEffect(() => setClient(true), []);
+
+  const onMount: OnMount = (ed, monaco) => {
+    editorRef.current = ed;
+    bootMonaco(monaco);
+    monaco.editor.setTheme(theme);
+    ed.onDidChangeCursorPosition((e) => onCursor?.(e.position.lineNumber, e.position.column));
+    monaco.editor.onDidChangeMarkers(() => {
+      const mine = monaco.editor.getModelMarkers({ resource: ed.getModel()?.uri });
+      onMarkers?.(
+        mine.map((m: { message: string; severity: number; startLineNumber: number }) => ({
+          file: path ?? "file",
+          message: m.message,
+          severity: m.severity > 4 ? "error" : "warning",
+          line: m.startLineNumber,
+        })),
+      );
+    });
+    extraFiles?.forEach((f) => {
+      const uri = monaco.Uri.parse(`file:///${f.path.replaceAll("\\", "/")}`);
+      if (!monaco.editor.getModel(uri)) {
+        monaco.editor.createModel(f.content, languageFromPath(f.path), uri);
+      }
+    });
+  };
+
+  if (!client) {
+    return <p className="p-3 text-xs text-subtle">Loading language engine…</p>;
   }
 
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-      {lineNumbers ? (
-        <div className="w-12 shrink-0 overflow-hidden border-r border-border bg-surface py-3 text-right font-mono text-[11px] leading-5 text-subtle">
-          {lines.map((_, i) => (
-            <div key={i} className={cn("pr-2", i + 1 === line && "text-fg")}>
-              {i + 1}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <textarea
-        ref={ref}
-        spellCheck={false}
-        className={cn(
-          "min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-sm leading-5 outline-none",
-          wrap ? "whitespace-pre-wrap" : "whitespace-pre overflow-x-auto",
-        )}
+    <div className="min-h-0 flex-1">
+      <Editor
+        height="100%"
+        language={lang}
+        path={path ?? "untitled.ts"}
+        theme={theme}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onSelect={updateCursor}
-        onKeyUp={updateCursor}
-        onClick={updateCursor}
+        onChange={(v) => onChange(v ?? "")}
+        onMount={onMount}
+        options={{
+          minimap: { enabled: Boolean(minimap) },
+          wordWrap: wrap ? "on" : "off",
+          lineNumbers: lineNumbers === false ? "off" : "on",
+          fontSize: 13,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+          automaticLayout: true,
+          tabSize: 2,
+          glyphMargin: true,
+          folding: true,
+          bracketPairColorization: { enabled: true },
+          quickSuggestions: true,
+          suggestOnTriggerCharacters: true,
+          parameterHints: { enabled: true },
+          scrollbar: { verticalScrollbarSize: 10 },
+        }}
       />
-      {find && value.toLowerCase().includes(find.toLowerCase()) ? (
-        <p className="sr-only">{find}</p>
-      ) : null}
     </div>
   );
 }
+
+loader.config({ paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs" } });
