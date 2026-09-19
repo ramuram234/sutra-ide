@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
-export function AppHeader({ active }: { active: "studio" | "extensions" }) {
+export function AppHeader({ active }: { active: "studio" | "extensions" | "settings" | "guide" }) {
   return (
     <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 md:px-6">
       <div className="flex items-baseline gap-3">
@@ -19,6 +19,15 @@ export function AppHeader({ active }: { active: "studio" | "extensions" }) {
           )}
         >
           Studio
+        </Link>
+        <Link
+          to="/settings"
+          className={cn(
+            "flex h-9 items-center rounded-sm px-3 text-xs font-medium",
+            active === "settings" ? "bg-raised text-fg" : "text-muted hover:text-fg",
+          )}
+        >
+          Settings
         </Link>
         <Link
           to="/extensions"

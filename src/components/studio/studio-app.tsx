@@ -146,6 +146,8 @@ export function StudioApp() {
         { label: "Save", shortcut: shortcutLabel("save", os, userKeys), onSelect: () => setSaved(true) },
         { label: "Command Palette…", shortcut: shortcutLabel("commandPalette", os, userKeys), onSelect: () => setPalette(true) },
         { label: "Preferences: Keyboard Shortcuts", shortcut: shortcutLabel("showKeybindings", os, userKeys), onSelect: () => openFile("keybindings", spec ? stage : "prompt") },
+        { label: "Settings…", onSelect: () => { window.location.href = "/settings"; } },
+        { label: "Developer guide", onSelect: () => { window.location.href = "/guide"; } },
         { label: "Extensions…", onSelect: () => { window.location.href = "/extensions"; } },
       ],
     },

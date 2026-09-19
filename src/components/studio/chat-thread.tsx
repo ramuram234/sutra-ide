@@ -4,6 +4,8 @@ import { generateModuleSpec } from "@/lib/sutra/generate";
 import { PRESETS } from "@/lib/sutra/presets";
 import { proposeCommand } from "@/lib/sutra/permissions";
 import { stackLabel } from "@/lib/sutra/codegen";
+import { loadUser } from "@/lib/sutra/identity";
+import { loadPlatform } from "@/lib/sutra/platform-config";
 import { useSutra } from "@/lib/sutra/store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,8 +37,22 @@ export function ChatThread() {
     setError(null);
 
     if (!spec) {
+      const platform = loadPlatform();
+      if (platform.keycloak.enabled && !loadUser()) {
+        addMessage({
+          role: "assistant",
+          text: "Keycloak is required. Open Settings → Identity and sign in, then send again.",
+        });
+        return;
+      }
       setBusy(true);
-      const res = await generateModuleSpec({ data: { prompt } });
+    const res = await generateModuleSpec({
+        data: {
+          prompt,
+          modelId: loadPlatform().defaultModelId,
+          userId: loadUser()?.sub,
+        },
+      });
       setBusy(false);
       if (!res.ok) {
         setError(res.error);

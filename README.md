@@ -2,6 +2,10 @@
 
 Spec-driven AI IDE for Windows and macOS. Explorer, editor, chat, terminal with Allow / Deny, VS Code and IntelliJ extensions.
 
+**Full manual:** [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) (also **Settings** and `/guide` in the app).
+
+Covers: run locally, onboard **xAI / OpenAI / Ollama / vLLM / Bedrock / Azure / any OpenAI-compatible host**, **MCP** tools, **Keycloak** sign-in, **token quotas**, installers, extensions.
+
 ## Install desktop (Windows / Mac)
 
 Installers are built by GitHub Actions.

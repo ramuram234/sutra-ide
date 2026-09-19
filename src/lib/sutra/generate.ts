@@ -1,5 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { detectStack, moduleSpecSchema, type ModuleSpec } from "./schema";
+import { chatCompletions } from "./model-router";
+import { DEFAULT_PLATFORM, type ModelEndpoint } from "./platform-config";
+import { addUsage, assertQuota } from "./quota";
 
 const SYSTEM = `You are Sutra, a spec-driven software IDE for professional developers on Windows and macOS.
 You turn a product prompt into a module specification. No government or domain assumptions.
@@ -39,51 +42,47 @@ function extractJson(text: string): unknown {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
+function resolveEndpoint(modelId?: string): ModelEndpoint {
+  const fromEnv: ModelEndpoint | null = process.env.SUTRA_MODEL_BASE_URL
+    ? {
+        id: "env",
+        label: "Env model",
+        kind: "custom",
+        baseUrl: process.env.SUTRA_MODEL_BASE_URL,
+        model: process.env.SUTRA_MODEL_ID || "hosted-model",
+        apiKeyEnv: "SUTRA_MODEL_API_KEY",
+        maxTokens: Number(process.env.SUTRA_MODEL_MAX_TOKENS || 3500),
+        enabled: true,
+      }
+    : null;
+  if (fromEnv) return fromEnv;
+  const all = DEFAULT_PLATFORM.models;
+  return all.find((m) => m.id === modelId && m.enabled) ?? all.find((m) => m.enabled) ?? all[0]!;
+}
+
 export const generateModuleSpec = createServerFn({ method: "POST" })
-  .validator((input: { prompt: string }) => {
+  .validator((input: { prompt: string; modelId?: string; userId?: string }) => {
     const prompt = input.prompt.trim();
     if (prompt.length < 8) throw new Error("Describe the module in a bit more detail.");
     if (prompt.length > 2000) throw new Error("Prompt is too long.");
-    return { prompt };
+    return { prompt, modelId: input.modelId, userId: input.userId?.trim() || "anonymous" };
   })
   .handler(async ({ data }): Promise<{ ok: true; spec: ModuleSpec } | { ok: false; error: string }> => {
-    const apiKey = process.env.XAI_API_KEY;
-    if (!apiKey) {
-      return { ok: false, error: "Hosted model is not available in this environment." };
-    }
+    const endpoint = resolveEndpoint(data.modelId);
+    const limit = Number(process.env.SUTRA_MONTHLY_TOKEN_LIMIT || DEFAULT_PLATFORM.quota.monthlyTokenLimit);
+    const gate = assertQuota(data.userId, limit, endpoint.maxTokens);
+    if (!gate.ok) return { ok: false, error: gate.error };
 
-    const res = await fetch("https://api.x.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      signal: AbortSignal.timeout(50_000),
-      body: JSON.stringify({
-        model: "grok-4.5",
-        temperature: 0.25,
-        max_tokens: 3500,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: data.prompt },
-        ],
-      }),
-    });
+    const chat = await chatCompletions(endpoint, [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: data.prompt },
+    ]);
+    if (!chat.ok) return { ok: false, error: chat.error };
 
-    if (!res.ok) {
-      return { ok: false, error: `Hosted model error ${res.status}` };
-    }
+    addUsage(data.userId, chat.usage.prompt + chat.usage.completion, limit);
 
-    const body = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const text = body.choices?.[0]?.message?.content ?? "";
-    if (!text.trim()) {
-      return { ok: false, error: "Hosted model returned an empty spec. Try again." };
-    }
     try {
-      const parsed = moduleSpecSchema.parse(extractJson(text));
+      const parsed = moduleSpecSchema.parse(extractJson(chat.text));
       const entityFields = parsed.entities[0]?.fields ?? [];
       const fromPrompt = detectStack(data.prompt);
       const spec: ModuleSpec = {
@@ -98,21 +97,16 @@ export const generateModuleSpec = createServerFn({ method: "POST" })
                 { id: "T3", title: "Wire the in-browser preview store", owner: "data" },
               ],
         screens: parsed.screens.map((s) =>
-          s.fields.length === 0 && entityFields.length
-            ? { ...s, fields: entityFields }
-            : s,
+          s.fields.length === 0 && entityFields.length ? { ...s, fields: entityFields } : s,
         ),
       };
       return { ok: true, spec };
     } catch (err) {
-      console.error("Sutra spec parse failed", err, text.slice(0, 800));
+      console.error("Sutra spec parse failed", err, chat.text.slice(0, 800));
       const detail =
         err && typeof err === "object" && "issues" in err
           ? JSON.stringify((err as { issues: unknown }).issues).slice(0, 280)
           : "Could not parse JSON spec";
-      return {
-        ok: false,
-        error: `Spec did not validate: ${detail}`,
-      };
+      return { ok: false, error: `Spec did not validate: ${detail}` };
     }
   });
