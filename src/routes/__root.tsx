@@ -1,6 +1,8 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { ThemeRoot } from "@/components/studio/theme-root";
+import { THEME_BOOT } from "@/lib/sutra/theme";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Sutra";
@@ -37,9 +39,11 @@ export const Route = createRootRoute({
   component: () => (
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <HeadContent />
       </head>
       <body>
+        <ThemeRoot />
         <PreviewHostBridge />
         <AuthProvider>
           <Outlet />

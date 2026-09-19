@@ -26,6 +26,8 @@ import { useIdeShortcuts } from "@/components/studio/use-ide-shortcuts";
 import { CommandPalette } from "@/components/studio/command-palette";
 import { KeybindingsEditor } from "@/components/studio/keybindings-editor";
 import { loadUserBindings, shortcutLabel, type IdeAction, type Keybinding } from "@/lib/sutra/keymap";
+import { saveThemePref } from "@/lib/sutra/theme";
+import { ThemePicker } from "@/components/studio/theme-picker";
 import { cn } from "@/lib/utils";
 
 const STAGES: { id: StudioStage; label: string }[] = [
@@ -183,6 +185,10 @@ export function StudioApp() {
         { label: showExplorer ? "Hide Explorer" : "Show Explorer", shortcut: shortcutLabel("toggleExplorer", os, userKeys), onSelect: () => setShowExplorer((v) => !v) },
         { label: showChat ? "Hide Chat" : "Show Chat", shortcut: shortcutLabel("toggleChat", os, userKeys), onSelect: () => setShowChat((v) => !v) },
         { label: showTerm ? "Hide Terminal" : "Show Terminal", shortcut: shortcutLabel("toggleTerminal", os, userKeys), onSelect: () => setShowTerm((v) => !v) },
+        { sep: true, label: "" },
+        { label: "Theme: System default", onSelect: () => saveThemePref("system") },
+        { label: "Theme: Light", onSelect: () => saveThemePref("light") },
+        { label: "Theme: Dark", onSelect: () => saveThemePref("dark") },
       ],
     },
     {
@@ -406,6 +412,8 @@ export function StudioApp() {
         <span>{os === "macos" ? "macOS" : "Windows"}</span>
         {spec ? <span>{stackLabel(spec.stack)}</span> : <span>Ready</span>}
         {saved ? <span className="text-ok">Saved</span> : null}
+        <span className="flex-1" />
+        <ThemePicker compact />
       </footer>
       {showKeys ? <ShortcutsHelp os={os} onClose={() => setShowKeys(false)} /> : null}
       {palette ? (

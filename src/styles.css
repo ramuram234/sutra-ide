@@ -37,6 +37,24 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+  html[data-theme="light"] {
+    --color-bg: #f3f3f6;
+    --color-surface: #ececf1;
+    --color-raised: #ffffff;
+    --color-fg: #1c1c24;
+    --color-muted: #5c5c6a;
+    --color-subtle: #8a8a98;
+    --color-accent: #6d28d9;
+    --color-accent-fg: #ffffff;
+    --color-border: color-mix(in oklab, var(--color-fg) 12%, transparent);
+    --color-ok: #3f7a48;
+    --color-warn: #9a6b24;
+    --color-danger: #b42318;
+    --color-ring: #6d28d9;
+    --color-activity: #e6e6ee;
+    --color-purple: #6d28d9;
+    --shadow-border: 0 0 0 1px color-mix(in oklab, var(--color-fg) 10%, transparent);
+  }
   body {
     background: var(--color-bg);
     color: var(--color-fg);

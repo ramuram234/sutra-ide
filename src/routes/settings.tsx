@@ -16,6 +16,7 @@ import {
 import { keycloakAuthUrl, pkcePair } from "@/lib/sutra/oidc";
 import { displayName, loadUser, saveUser } from "@/lib/sutra/identity";
 import { listModelStatus } from "@/lib/sutra/model-router";
+import { ThemePicker } from "@/components/studio/theme-picker";
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage });
 
@@ -32,7 +33,7 @@ const KINDS: ModelProviderKind[] = [
 
 function SettingsPage() {
   const [cfg, setCfg] = useState<PlatformConfig>(DEFAULT_PLATFORM);
-  const [tab, setTab] = useState<"models" | "mcp" | "identity" | "quota">("models");
+  const [tab, setTab] = useState<"appearance" | "models" | "mcp" | "identity" | "quota">("appearance");
   const [keys, setKeys] = useState<Record<string, boolean>>({});
   const user = loadUser();
 
@@ -63,7 +64,7 @@ function SettingsPage() {
           </p>
         </div>
         <nav className="flex flex-wrap gap-1">
-          {(["models", "mcp", "identity", "quota"] as const).map((t) => (
+          {(["appearance", "models", "mcp", "identity", "quota"] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -75,6 +76,20 @@ function SettingsPage() {
           ))}
         </nav>
 
+        {tab === "appearance" ? (
+          <section className="grid gap-4">
+            <p className="text-sm text-muted">
+              Color mode applies immediately. System default tracks Windows / macOS. The desktop app also
+              updates the native window chrome.
+            </p>
+            <ThemePicker />
+            <p className="text-xs text-subtle">
+              Installed .exe / .dmg: the IDE server runs on this computer (no extra Node install). Put API
+              keys in <code>%USERPROFILE%\\.sutra\\.env</code> (Windows) or <code>~/.sutra/.env</code>{" "}
+              (macOS), e.g. <code>XAI_API_KEY=…</code>. Workspace files: <code>~/Sutra/workspace</code>.
+            </p>
+          </section>
+        ) : null}
         {tab === "models" ? <ModelsTab cfg={cfg} persist={persist} keys={keys} /> : null}
         {tab === "mcp" ? <McpTab cfg={cfg} persist={persist} /> : null}
         {tab === "identity" ? <IdentityTab cfg={cfg} persist={persist} /> : null}

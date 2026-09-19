@@ -1,20 +1,24 @@
 appId: dev.sutra.ide
 productName: Sutra
 copyright: Sutra
+asar: false
 directories:
   output: release
   buildResources: desktop/icons
 files:
   - desktop/**
   - package.json
-  - scripts/with-app-env.mjs
-  - scripts/app-env-plugin.mjs
   - vite.config.ts
-  - src/**/*
-  - public/**/*
-  - server/**/*
-  - .vercel/output/**/*
+  - tsconfig.json
+  - scripts/**
+  - src/**
+  - public/**
+  - server/**
+  - docs/**
+  - .vercel/output/**
+  - node_modules/**
   - "!node_modules/.cache/**"
+  - "!**/*.map"
 extraMetadata:
   main: desktop/main.mjs
 win:

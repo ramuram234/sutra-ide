@@ -3,7 +3,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 
-const ROOT = "/tmp/sutra-work";
+import { homedir, tmpdir } from "node:os";
+
+const ROOT =
+  process.env.SUTRA_WORKSPACE?.trim() ||
+  (process.platform === "win32"
+    ? path.join(process.env.USERPROFILE || homedir(), "Sutra", "workspace")
+    : process.env.HOME
+      ? path.join(process.env.HOME, "Sutra", "workspace")
+      : path.join(tmpdir(), "sutra-work"));
 
 const ALLOW = new Set([
   "node",
