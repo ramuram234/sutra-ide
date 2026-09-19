@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { canAutoShell, canAutoWrite, type AgentMode } from "./agent-modes";
+import { findAgent, loadProjectAgents, type AgentTool } from "./agents";
 import { DEFAULT_PLATFORM } from "./platform-config";
 import { chatWithTools, type ToolDef } from "./model-router";
 import { evaluate } from "./permissions";
@@ -117,7 +118,11 @@ async function execTool(
   name: string,
   args: Record<string, string>,
   approved: boolean,
+  allowed: AgentTool[],
 ): Promise<{ ok: boolean; detail: string; pending?: AgentPending }> {
+  if (!allowed.includes(name as AgentTool)) {
+    return { ok: false, detail: `Agent is not allowed to use ${name}.` };
+  }
   const rel = (args.path || args.pattern || "").replaceAll("\\", "/");
   if (name === "read") {
     const f = await readWorkspaceFile({ data: { folder, rel } });
@@ -190,12 +195,14 @@ export const runAgent = createServerFn({ method: "POST" })
     prompt: string;
     mode: AgentMode;
     modelId?: string;
+    agentId?: string;
     approved?: AgentPending;
   }) => ({
     folder: input.folder,
     prompt: input.prompt.trim().slice(0, 4000),
     mode: input.mode,
     modelId: input.modelId,
+    agentId: input.agentId || "default",
     approved: input.approved,
   }))
   .handler(async ({ data }): Promise<{
@@ -204,11 +211,16 @@ export const runAgent = createServerFn({ method: "POST" })
     trace: AgentTrace[];
     pending?: AgentPending;
   } | { ok: false; error: string }> => {
+    const extra = await loadProjectAgents({ data: { folder: data.folder } });
+    const profile = findAgent(data.agentId, extra);
+    const tools = TOOLS.filter((t) => profile.tools.includes(t.function.name as AgentTool));
+    const mode = profile.mode ?? data.mode;
     const mem = await memory(data.folder);
-    const system = `You are Sutra Code, an agentic coding assistant in a desktop IDE (same loop as Claude Code).
-Use tools to gather context, edit, run, then verify. Be concise.
-Permission mode: ${data.mode}.
-${data.mode === "plan" ? "Do not edit source files. Research and propose a plan." : ""}
+    const system = `${profile.system}
+You are running as agent "${profile.name}" in a desktop IDE (same loop as Claude Code).
+Permission mode: ${mode}.
+Allowed tools: ${profile.tools.join(", ")}.
+${mode === "plan" ? "Do not edit source files. Research and propose a plan." : ""}
 Workspace: ${data.folder}
 ${mem}`;
 
@@ -220,7 +232,7 @@ ${mem}`;
     let approved = Boolean(data.approved);
 
     if (data.approved) {
-      const done = await execTool(data.folder, data.mode, data.approved.name, data.approved.args, true);
+      const done = await execTool(data.folder, mode, data.approved.name, data.approved.args, true, profile.tools);
       trace.push({ name: data.approved.name, ok: done.ok, detail: done.detail.slice(0, 400) });
       messages.push({
         role: "assistant",
@@ -231,7 +243,7 @@ ${mem}`;
     }
 
     for (let i = 0; i < 6; i++) {
-      const chat = await chatWithTools(resolveEndpoint(data.modelId), messages, TOOLS);
+      const chat = await chatWithTools(resolveEndpoint(data.modelId), messages, tools);
       if (!chat.ok) return { ok: false, error: chat.error };
 
       let calls = chat.toolCalls ?? [];
@@ -254,7 +266,7 @@ ${mem}`;
 
       for (const call of calls) {
         const args = parseArgs(call.arguments);
-        const result = await execTool(data.folder, data.mode, call.name, args, approved);
+        const result = await execTool(data.folder, mode, call.name, args, approved, profile.tools);
         if (result.pending) return { ok: true, text: chat.text || `Need approval to ${call.name}.`, trace, pending: result.pending };
         trace.push({ name: call.name, ok: result.ok, detail: result.detail.slice(0, 400) });
         messages.push({ role: "tool", tool_call_id: call.id, content: result.detail.slice(0, 8000) });

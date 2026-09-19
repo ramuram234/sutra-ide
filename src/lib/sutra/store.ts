@@ -42,6 +42,7 @@ type SutraState = {
   userRules: PermissionRule[];
   workspaceRules: Record<string, PermissionRule[]>;
   pending: PendingShell | null;
+  agentId: string;
   persistOpen: boolean;
   persistEffect: "allow" | "deny";
   setPrompt: (v: string) => void;
@@ -57,6 +58,7 @@ type SutraState = {
   clearTerm: () => void;
   setTermBusy: (v: boolean) => void;
   setPending: (p: PendingShell | null) => void;
+  setAgentId: (id: string) => void;
   setPersistOpen: (open: boolean, effect?: "allow" | "deny") => void;
   addRule: (rule: PermissionRule, slug: string) => void;
   allRules: (slug: string) => PermissionRule[];
@@ -103,6 +105,7 @@ export const useSutra = create<SutraState>((set, get) => ({
   userRules: persisted.user,
   workspaceRules: persisted.workspace,
   pending: null,
+  agentId: "default",
   persistOpen: false,
   persistEffect: "allow",
   setPrompt: (prompt) =>
@@ -160,6 +163,7 @@ export const useSutra = create<SutraState>((set, get) => ({
   clearTerm: () => set({ termLines: [] }),
   setTermBusy: (termBusy) => set({ termBusy }),
   setPending: (pending) => set({ pending, persistOpen: pending ? get().persistOpen : false }),
+  setAgentId: (agentId) => set({ agentId }),
   setPersistOpen: (persistOpen, effect) =>
     set({ persistOpen, persistEffect: effect ?? get().persistEffect }),
   allRules: (slug) => {

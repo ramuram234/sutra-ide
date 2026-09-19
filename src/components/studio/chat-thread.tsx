@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, Bug, FileText, ListTodo, Loader2, Zap } from "lucide-react";
+import { BUILTIN_AGENTS, findAgent, loadProjectAgents, seedReviewAgent, type AgentDef } from "@/lib/sutra/agents";
 import { generateModuleSpec } from "@/lib/sutra/generate";
 import { runAgent, type AgentPending, type AgentTrace } from "@/lib/sutra/agent-loop";
 import { AGENT_MODES, nextAgentMode, type AgentMode } from "@/lib/sutra/agent-modes";
@@ -39,14 +40,24 @@ export function ChatThread({ folder }: { folder?: string | null }) {
   const setPending = useSutra((s) => s.setPending);
   const setStage = useSutra((s) => s.setStage);
   const setFile = useSutra((s) => s.setFile);
+  const agentId = useSutra((s) => s.agentId);
+  const setAgentId = useSutra((s) => s.setAgentId);
   const [draft, setDraft] = useState("");
   const [workflow, setWorkflow] = useState<AgentWorkflow>("spec");
   const [autopilot, setAutopilot] = useState(false);
   const [mode, setMode] = useState<AgentMode>("manual");
   const [pendingTool, setPendingTool] = useState<{ prompt: string; pending: AgentPending } | null>(null);
+  const [customAgents, setCustomAgents] = useState<AgentDef[]>([]);
   const chat = chats.find((c) => c.id === activeId);
   const models = loadPlatform().models.filter((m) => m.enabled);
+  const agents = [...BUILTIN_AGENTS, ...customAgents];
+  const activeAgent = findAgent(agentId, customAgents);
   const empty = (chat?.messages ?? []).filter((m) => m.role !== "system").length === 0 && !spec;
+
+  useEffect(() => {
+    if (!folder) return;
+    void loadProjectAgents({ data: { folder } }).then(setCustomAgents);
+  }, [folder]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -70,8 +81,9 @@ export function ChatThread({ folder }: { folder?: string | null }) {
         folder,
         prompt:
           workflow === "plan" || mode === "plan" ? `Plan only. Do not edit files. ${prompt}` : prompt,
-        mode: autopilot ? "acceptEdits" : workflow === "plan" ? "plan" : mode,
+        mode: autopilot ? "acceptEdits" : activeAgent.mode ?? (workflow === "plan" ? "plan" : mode),
         modelId: loadPlatform().defaultModelId,
+        agentId,
         approved,
       },
     });
@@ -137,15 +149,36 @@ export function ChatThread({ folder }: { folder?: string | null }) {
           return;
         }
         const r = await initSutraMd({ data: { folder } });
-        addMessage({ role: "assistant", text: `Wrote ${r.path}. Same job as Claude Code CLAUDE.md — loaded every turn.` });
+        await seedReviewAgent({ data: { folder } });
+        const extra = await loadProjectAgents({ data: { folder } });
+        setCustomAgents(extra);
+        addMessage({
+          role: "assistant",
+          text: `Wrote ${r.path} and .sutra/agents/review.md. Switch with /agent review`,
+        });
         return;
       }
       if (slash.cmd === "doctor") {
         const skills = folder ? await listSkills({ data: { folder } }) : [];
         addMessage({
           role: "assistant",
-          text: `Folder: ${folder || "(none)"}\nModel: ${loadPlatform().defaultModelId}\nMode: ${mode}\nSkills: ${skills.length ? skills.join(", ") : "none (.sutra/skills/*/SKILL.md)"}`,
+          text: `Folder: ${folder || "(none)"}\nAgent: ${activeAgent.name}\nModel: ${loadPlatform().defaultModelId}\nMode: ${mode}\nSkills: ${skills.length ? skills.join(", ") : "none"}`,
         });
+        return;
+      }
+      if (slash.cmd === "agent") {
+        const id = (slash.arg || "default").toLowerCase();
+        const hit = agents.find((a) => a.id === id || a.name.toLowerCase() === id);
+        if (!hit) {
+          addMessage({
+            role: "assistant",
+            text: `Unknown agent. Try: ${agents.map((a) => a.id).join(", ")}`,
+          });
+          return;
+        }
+        setAgentId(hit.id);
+        if (hit.mode) setMode(hit.mode);
+        addMessage({ role: "assistant", text: `Switched to ${hit.name}. ${hit.blurb}` });
         return;
       }
       if (slash.cmd === "rewind") {
@@ -244,7 +277,10 @@ export function ChatThread({ folder }: { folder?: string | null }) {
                     <li key={w.id}>
                       <button
                         type="button"
-                        onClick={() => setWorkflow(w.id)}
+                        onClick={() => {
+                          setWorkflow(w.id);
+                          setAgentId(w.id);
+                        }}
                         className={cn(
                           "flex w-full items-start gap-3 rounded-md px-2 py-2 text-left",
                           workflow === w.id ? "bg-raised" : "hover:bg-surface",
@@ -344,6 +380,23 @@ export function ChatThread({ folder }: { folder?: string | null }) {
             }}
           />
           <div className="mt-1 flex items-center gap-2 text-xs text-subtle">
+            <select
+              className="h-7 max-w-[8rem] rounded-sm bg-surface px-2"
+              value={agentId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setAgentId(id);
+                const a = findAgent(id, customAgents);
+                if (a.mode) setMode(a.mode);
+              }}
+              title="Agent"
+            >
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
             <select
               className="h-7 rounded-sm bg-surface px-2"
               value={mode}

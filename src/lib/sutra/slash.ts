@@ -7,6 +7,7 @@ export const SLASH = [
   { cmd: "/model", hint: "Show the active model" },
   { cmd: "/doctor", hint: "Check folder, SUTRA.md, and model key" },
   { cmd: "/rewind", hint: "Restore last file checkpoint" },
+  { cmd: "/agent", hint: "Switch agent: /agent review | explore | spec | default" },
 ];
 
 export function parseSlash(text: string) {
