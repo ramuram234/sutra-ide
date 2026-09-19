@@ -83,7 +83,7 @@ export function ChatThread() {
         setFile("react");
         addMessage({
           role: "assistant",
-          text: `Quick Spec (${stackLabel(res.spec.stack)}) for ${res.spec.name}. Specs are in Explorer. Shell still needs Allow / Deny unless Autopilot allowed the command.`,
+          text: `Quick Spec (${stackLabel(res.spec.stack)}) for ${res.spec.name}. Specs are in Explorer. Shell still needs Allow / Deny — Autopilot never skips command approval.`,
         });
       } else if (workflow === "plan") {
         addMessage({

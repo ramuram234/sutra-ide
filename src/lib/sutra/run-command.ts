@@ -1,102 +1,71 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
-
-import { homedir, tmpdir } from "node:os";
+import {
+  ALLOWED_BINS,
+  contained,
+  gitSubcommandOk,
+  hasMetacharacters,
+  isProtectedRel,
+  npmSubcommandOk,
+  safePathEnv,
+  safeRel,
+  tokenize,
+} from "./shell-safe";
 
 const ROOT =
   process.env.SUTRA_WORKSPACE?.trim() ||
-  (process.platform === "win32"
-    ? path.join(process.env.USERPROFILE || homedir(), "Sutra", "workspace")
-    : process.env.HOME
-      ? path.join(process.env.HOME, "Sutra", "workspace")
-      : path.join(tmpdir(), "sutra-work"));
-
-const ALLOW = new Set([
-  "node",
-  "npm",
-  "npx",
-  "python3",
-  "python",
-  "git",
-  "ls",
-  "dir",
-  "cat",
-  "type",
-  "echo",
-  "mkdir",
-  "md",
-  "pwd",
-  "whoami",
-  "hostname",
-  "uname",
-  "date",
-  "clear",
-  "cls",
-  "cd",
-]);
+  path.join(process.env.USERPROFILE || process.env.HOME || homedir() || tmpdir(), "Sutra", "workspace");
 
 export type ShellOs = "windows" | "macos";
 
-function slugOk(slug: string) {
-  return /^[a-z0-9][a-z0-9-]{0,48}$/.test(slug);
+function hostOs(): ShellOs {
+  return process.platform === "win32" ? "windows" : "macos";
 }
 
-function tokenize(input: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let q: '"' | "'" | null = null;
-  for (const ch of input.trim()) {
-    if (q) {
-      if (ch === q) q = null;
-      else cur += ch;
-      continue;
+function spawnSpec(rawBin: string, rest: string[], os: ShellOs): { bin: string; args: string[] } {
+  if (os === "windows") {
+    if (["dir", "type", "cls", "md", "mkdir", "echo", "pwd"].includes(rawBin)) {
+      const inner = rawBin === "pwd" ? "cd" : rawBin === "mkdir" ? "md" : rawBin;
+      return { bin: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", inner, ...rest] };
     }
-    if (ch === '"' || ch === "'") {
-      q = ch;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (cur) out.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += ch;
+    if (rawBin === "ls") return { bin: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "dir", ...rest] };
+    if (rawBin === "cat") return { bin: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "type", ...rest] };
+    const name = rawBin === "python3" ? "python" : rawBin;
+    const bin = name === "npm" || name === "npx" ? `${name}.cmd` : name === "node" ? "node.exe" : name;
+    return { bin, args: rest };
   }
-  if (cur) out.push(cur);
-  return out;
-}
-
-function mapBin(bin: string): { bin: string; argsPrefix: string[] } {
-  if (bin === "dir") return { bin: "ls", argsPrefix: ["-la"] };
-  if (bin === "type") return { bin: "cat", argsPrefix: [] };
-  if (bin === "md") return { bin: "mkdir", argsPrefix: ["-p"] };
-  if (bin === "cls") return { bin: "clear", argsPrefix: [] };
-  if (bin === "python") return { bin: "python3", argsPrefix: [] };
-  return { bin, argsPrefix: [] };
-}
-
-function safeRel(p: string) {
-  const n = p.replaceAll("\\", "/");
-  if (!n || n.startsWith("/") || n.includes("..")) return null;
-  return n;
+  if (rawBin === "dir") return { bin: "ls", args: ["-la", ...rest] };
+  if (rawBin === "type") return { bin: "cat", args: rest };
+  if (rawBin === "md") return { bin: "mkdir", args: ["-p", ...rest] };
+  if (rawBin === "cls") return { bin: "clear", args: rest };
+  if (rawBin === "python") return { bin: "python3", args: rest };
+  return { bin: rawBin, args: rest };
 }
 
 function spawnCapture(bin: string, args: string[], cwd: string, timeoutMs = 12_000) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     const child = spawn(bin, args, {
       cwd,
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: cwd, LANG: "C.UTF-8" },
+      env: {
+        ...process.env,
+        PATH: safePathEnv(process.env.Path || process.env.PATH),
+        HOME: process.env.HOME,
+        LANG: process.env.LANG || "C.UTF-8",
+      },
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      shell: false,
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (d) => {
+    child.stdout?.on("data", (d) => {
       stdout += String(d);
       if (stdout.length > 12_000) stdout = stdout.slice(0, 12_000) + "\n…truncated";
     });
-    child.stderr.on("data", (d) => {
+    child.stderr?.on("data", (d) => {
       stderr += String(d);
       if (stderr.length > 8_000) stderr = stderr.slice(0, 8_000) + "\n…truncated";
     });
@@ -120,20 +89,31 @@ async function cwdOf(root: string) {
     const raw = (await readFile(path.join(root, ".sutra-cwd"), "utf8")).trim();
     const rel = safeRel(raw) ?? ".";
     const full = path.resolve(root, rel);
-    if (!full.startsWith(root)) return root;
+    if (!contained(root, full)) return root;
     return full;
   } catch {
     return root;
   }
 }
 
+export const desktopHealth = createServerFn({ method: "GET" }).handler(async () => ({
+  platform: process.platform,
+  workspace: ROOT,
+  node: process.version,
+  keys: {
+    XAI_API_KEY: Boolean(process.env.XAI_API_KEY?.trim()),
+    SUTRA_MODEL_API_KEY: Boolean(process.env.SUTRA_MODEL_API_KEY?.trim()),
+    OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY?.trim()),
+  },
+}));
+
 export const runShellCommand = createServerFn({ method: "POST" })
   .validator((input: { slug: string; command: string; os: ShellOs; files?: { path: string; code: string }[] }) => {
     const slug = input.slug.trim().toLowerCase();
     const command = input.command.trim();
-    if (!slugOk(slug)) throw new Error("Invalid project slug.");
+    if (!/^[a-z0-9][a-z0-9-]{0,48}$/.test(slug)) throw new Error("Invalid project slug.");
     if (!command || command.length > 240) throw new Error("Command is empty or too long.");
-    if (/[;|&`$<>]/.test(command) && !command.startsWith("__init__")) {
+    if (hasMetacharacters(command) && !command.startsWith("__init__")) {
       throw new Error("Pipes, redirects and chaining are blocked.");
     }
     const os: ShellOs = input.os === "windows" ? "windows" : "macos";
@@ -144,22 +124,23 @@ export const runShellCommand = createServerFn({ method: "POST" })
     return { slug, command, os, files };
   })
   .handler(async ({ data }) => {
+    const os = hostOs();
     const root = path.join(ROOT, data.slug);
     await mkdir(root, { recursive: true });
 
     if (data.command === "__init__" || data.files.length) {
       for (const f of data.files) {
         const rel = safeRel(f.path);
-        if (!rel) continue;
+        if (!rel || isProtectedRel(rel)) continue;
         const dest = path.join(root, rel);
-        if (!dest.startsWith(root)) continue;
+        if (!contained(root, dest)) continue;
         await mkdir(path.dirname(dest), { recursive: true });
         await writeFile(dest, f.code, "utf8");
       }
       if (data.command === "__init__") {
         return {
           ok: true as const,
-          stdout: `Wrote ${data.files.length} files into project ${data.slug}`,
+          stdout: `Wrote ${data.files.length} files into ${root}`,
           stderr: "",
           code: 0,
           cwd: ".",
@@ -169,11 +150,11 @@ export const runShellCommand = createServerFn({ method: "POST" })
 
     const tokens = tokenize(data.command);
     const rawBin = (tokens[0] ?? "").toLowerCase();
-    if (!ALLOW.has(rawBin)) {
+    if (!ALLOWED_BINS.has(rawBin)) {
       return {
         ok: false as const,
         stdout: "",
-        stderr: `'${rawBin}' is not allowed. Try node, npm, ls/dir, cat/type, mkdir, pwd, git --version.`,
+        stderr: `'${rawBin}' is not allowed.`,
         code: 126,
         cwd: ".",
       };
@@ -188,7 +169,7 @@ export const runShellCommand = createServerFn({ method: "POST" })
         return { ok: false as const, stdout: "", stderr: "cd: path not allowed", code: 1, cwd: path.relative(root, cwd) || "." };
       }
       const next = path.resolve(cwd, rel);
-      if (!next.startsWith(root)) {
+      if (!contained(root, next)) {
         return { ok: false as const, stdout: "", stderr: "cd: outside project", code: 1, cwd: "." };
       }
       await writeFile(path.join(root, ".sutra-cwd"), path.relative(root, next) || ".", "utf8");
@@ -199,25 +180,20 @@ export const runShellCommand = createServerFn({ method: "POST" })
       return { ok: true as const, stdout: "", stderr: "", code: 0, cwd: path.relative(root, cwd) || ".", clear: true };
     }
 
-    const mapped = mapBin(rawBin);
     const rest = tokens.slice(1);
-    if (mapped.bin === "npm" && rest[0] && !["--version", "-v", "init", "install", "ls", "run", "view"].includes(rest[0])) {
-      return { ok: false as const, stdout: "", stderr: "npm: only --version, init, install, ls, run", code: 126, cwd: "." };
+    if ((rawBin === "npm" || rawBin === "npx") && !npmSubcommandOk(rest[0])) {
+      return { ok: false as const, stdout: "", stderr: "npm/npx: only --version, init, install, ls, run", code: 126, cwd: "." };
     }
-    if (mapped.bin === "npx" && rest[0] && rest[0] !== "--version") {
+    if (rawBin === "npx" && rest[0] && rest[0] !== "--version") {
       return { ok: false as const, stdout: "", stderr: "npx: only --version in this studio", code: 126, cwd: "." };
     }
-    if (mapped.bin === "git" && rest[0] && !["--version", "status", "log"].includes(rest[0])) {
-      return { ok: false as const, stdout: "", stderr: "git: only --version, status, log", code: 126, cwd: "." };
+    if (rawBin === "git" && !gitSubcommandOk(rest[0])) {
+      return { ok: false as const, stdout: "", stderr: "git: only --version, status, log, diff", code: 126, cwd: "." };
     }
 
-    const args = [...mapped.argsPrefix, ...rest].map((a) => {
-      if (a.includes("\\") && !a.startsWith("-")) return a.replaceAll("\\", "/");
-      return a;
-    });
-
-    const timeout = mapped.bin === "npm" && rest[0] === "install" ? 40_000 : 12_000;
-    const result = await spawnCapture(mapped.bin, args, cwd, timeout);
+    const spec = spawnSpec(rawBin, rest, os);
+    const timeout = rawBin === "npm" && rest[0] === "install" ? 40_000 : 12_000;
+    const result = await spawnCapture(spec.bin, spec.args, cwd, timeout);
     return {
       ok: result.code === 0,
       stdout: result.stdout,

@@ -18,6 +18,9 @@ files:
   - .vercel/output/**
   - node_modules/**
   - "!node_modules/.cache/**"
+  - "!node_modules/playwright/**"
+  - "!node_modules/playwright-core/**"
+  - "!node_modules/@playwright/**"
   - "!**/*.map"
 extraMetadata:
   main: desktop/main.mjs

@@ -14,7 +14,40 @@ export type PermissionRule = {
 export const KIRO_INVARIANTS: PermissionRule[] = [
   {
     capability: "shell",
-    match: ["rm *", "rmdir *", "sudo *", "chmod *", "chown *", "mkfs *", "format *", "del *", "Remove-Item *", "curl *", "wget *", "ssh *", "kill *"],
+    match: [
+      "rm *",
+      "rmdir *",
+      "sudo *",
+      "chmod *",
+      "chown *",
+      "mkfs *",
+      "format *",
+      "del *",
+      "Remove-Item *",
+      "curl *",
+      "wget *",
+      "ssh *",
+      "kill *",
+      "powershell *",
+      "pwsh *",
+      "cmd *",
+      "bash -c *",
+      "sh -c *",
+      "start *",
+      "msiexec *",
+      "rundll32 *",
+      "wscript *",
+      "cscript *",
+      "certutil *",
+      "bitsadmin *",
+      "reg *",
+    ],
+    effect: "deny",
+    scope: "kiro",
+  },
+  {
+    capability: "fs_write",
+    match: ["*.env", "**/.env", "mcp.json", "**/mcp.json", ".git/**", "*.pem", "*.key", "*.p12"],
     effect: "deny",
     scope: "kiro",
   },
@@ -78,7 +111,7 @@ function ruleApplies(rule: PermissionRule, capability: Capability, resource: str
 export function evaluate(
   capability: Capability,
   resource: string,
-  extra: PermissionRule[],
+  extra: PermissionRule[] = [],
 ): { effect: Effect; rule?: PermissionRule } {
   const all = [...KIRO_INVARIANTS, ...DEFAULT_RULES, ...extra];
   const hit = all.filter((r) => ruleApplies(r, capability, resource));

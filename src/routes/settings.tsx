@@ -16,6 +16,7 @@ import {
 import { keycloakAuthUrl, pkcePair } from "@/lib/sutra/oidc";
 import { displayName, loadUser, saveUser } from "@/lib/sutra/identity";
 import { listModelStatus } from "@/lib/sutra/model-router";
+import { desktopHealth } from "@/lib/sutra/run-command";
 import { ThemePicker } from "@/components/studio/theme-picker";
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage });
@@ -35,11 +36,13 @@ function SettingsPage() {
   const [cfg, setCfg] = useState<PlatformConfig>(DEFAULT_PLATFORM);
   const [tab, setTab] = useState<"appearance" | "models" | "mcp" | "identity" | "quota">("appearance");
   const [keys, setKeys] = useState<Record<string, boolean>>({});
+  const [health, setHealth] = useState<{ platform: string; workspace: string; node: string; keys: Record<string, boolean> } | null>(null);
   const user = loadUser();
 
   useEffect(() => {
     setCfg(loadPlatform());
     void listModelStatus().then(setKeys);
+    void desktopHealth().then(setHealth);
   }, []);
 
   function persist(next: PlatformConfig) {
@@ -83,6 +86,15 @@ function SettingsPage() {
               updates the native window chrome.
             </p>
             <ThemePicker />
+            {health ? (
+              <p className="rounded-md bg-raised p-3 font-mono text-xs text-muted">
+                runtime {health.platform} · node {health.node}
+                <br />
+                workspace {health.workspace}
+                <br />
+                keys {Object.entries(health.keys).map(([k, v]) => `${k}=${v ? "yes" : "no"}`).join(" · ")}
+              </p>
+            ) : null}
             <p className="text-xs text-subtle">
               Installed .exe / .dmg: the IDE server runs on this computer (no extra Node install). Put API
               keys in <code>%USERPROFILE%\\.sutra\\.env</code> (Windows) or <code>~/.sutra/.env</code>{" "}
