@@ -17,13 +17,42 @@ export type AgentDef = {
 const ALL: AgentTool[] = ["read", "write", "edit", "glob", "grep", "bash"];
 const READ: AgentTool[] = ["read", "glob", "grep", "bash"];
 
+export const TALK_TO = ["team", "default", "nidhi", "budget"] as const;
+
 export const BUILTIN_AGENTS: AgentDef[] = [
+  {
+    id: "team",
+    name: "Team",
+    blurb: "Office team: spec, UI, API, QA + Nidhi/Budget when relevant",
+    tools: ALL,
+    mode: "acceptEdits",
+    system: "You are Sutra Team lead. Decompose the user's product request, assign workers, ship a working module.",
+    builtin: true,
+  },
   {
     id: "default",
     name: "Default",
-    blurb: "General coding: read, edit, run, verify",
+    blurb: "Solo coding assistant",
     tools: ALL,
     system: "You are Sutra Default. Gather context, edit, run, verify. Be concise.",
+    builtin: true,
+  },
+  {
+    id: "nidhi",
+    name: "Nidhi",
+    blurb: "ESS / HR: salary, leave, pension, GPF — collaborates with Team",
+    tools: ALL,
+    system:
+      "You are Nidhi ESS domain agent. Employee HR, salary, payslip, PAGLI, GPF, arrear, pension, leave. Never mix budget HOA fields into ESS screens. When the user wants a screen built, hand off to the software team with HR field rules.",
+    builtin: true,
+  },
+  {
+    id: "budget",
+    name: "Budget",
+    blurb: "Finance: budget, expenditure, receipts, PD, pending bills",
+    tools: ALL,
+    system:
+      "You are Budget AI domain agent. Budget, expenditure, receipts, public account, PD account, pending bills, HOA. Never mix employee salary into finance screens. When the user wants a screen built, hand off to the software team with finance field rules.",
     builtin: true,
   },
   {

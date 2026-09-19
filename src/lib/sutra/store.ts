@@ -105,7 +105,7 @@ export const useSutra = create<SutraState>((set, get) => ({
   userRules: persisted.user,
   workspaceRules: persisted.workspace,
   pending: null,
-  agentId: "default",
+  agentId: "team",
   persistOpen: false,
   persistEffect: "allow",
   setPrompt: (prompt) =>

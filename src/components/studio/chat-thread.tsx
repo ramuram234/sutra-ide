@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ArrowUp, Bug, FileText, ListTodo, Loader2, Zap } from "lucide-react";
-import { BUILTIN_AGENTS, findAgent, loadProjectAgents, seedReviewAgent, type AgentDef } from "@/lib/sutra/agents";
+import { BUILTIN_AGENTS, TALK_TO, findAgent, loadProjectAgents, seedReviewAgent, type AgentDef } from "@/lib/sutra/agents";
 import { generateModuleSpec } from "@/lib/sutra/generate";
+import { isBuildRequest, runSoftwareTeam } from "@/lib/sutra/software-team";
 import { runAgent, type AgentPending, type AgentTrace } from "@/lib/sutra/agent-loop";
 import { AGENT_MODES, nextAgentMode, type AgentMode } from "@/lib/sutra/agent-modes";
 import { initSutraMd, listSkills, rewindFile } from "@/lib/sutra/claude-memory";
@@ -196,6 +197,35 @@ export function ChatThread({ folder }: { folder?: string | null }) {
       }
     }
 
+    const useTeam =
+      agentId === "team" ||
+      ((agentId === "nidhi" || agentId === "budget" || agentId === "default") && isBuildRequest(prompt));
+    if (useTeam && isBuildRequest(prompt)) {
+      setBusy(true);
+      const res = await runSoftwareTeam({
+        data: {
+          prompt,
+          folder: folder ?? undefined,
+          modelId: loadPlatform().defaultModelId,
+          userId: loadUser()?.sub,
+        },
+      });
+      setBusy(false);
+      if (!res.ok) {
+        setError(res.error);
+        addMessage({ role: "assistant", text: res.error });
+        return;
+      }
+      setSpec(res.spec);
+      addMessage({
+        role: "assistant",
+        text: res.steps.map((s) => `${s.ok ? "✓" : "✗"} ${s.role}: ${s.detail}`).join("\n"),
+      });
+      setStage("implement");
+      setFile("react");
+      return;
+    }
+
     if (folder) {
       await agent(prompt);
       return;
@@ -381,7 +411,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
           />
           <div className="mt-1 flex items-center gap-2 text-xs text-subtle">
             <select
-              className="h-7 max-w-[8rem] rounded-sm bg-surface px-2"
+              className="h-7 max-w-[9rem] rounded-sm bg-surface px-2"
               value={agentId}
               onChange={(e) => {
                 const id = e.target.value;
@@ -389,13 +419,24 @@ export function ChatThread({ folder }: { folder?: string | null }) {
                 const a = findAgent(id, customAgents);
                 if (a.mode) setMode(a.mode);
               }}
-              title="Agent"
+              title="Who you talk to. Workers run in the background."
             >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
+              <optgroup label="Talk to">
+                {agents
+                  .filter((a) => (TALK_TO as readonly string[]).includes(a.id) || !a.builtin)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="Workers">
+                {BUILTIN_AGENTS.filter((a) => !(TALK_TO as readonly string[]).includes(a.id)).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <select
               className="h-7 rounded-sm bg-surface px-2"
