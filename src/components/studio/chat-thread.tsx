@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUp, Bug, FileText, ListTodo, Loader2, Zap } from "lucide-react";
 import { generateModuleSpec } from "@/lib/sutra/generate";
+import { runAgent, type AgentPending, type AgentTrace } from "@/lib/sutra/agent-loop";
+import { AGENT_MODES, nextAgentMode, type AgentMode } from "@/lib/sutra/agent-modes";
 import { PRESETS } from "@/lib/sutra/presets";
 import { proposeCommand } from "@/lib/sutra/permissions";
 import { stackLabel } from "@/lib/sutra/codegen";
@@ -20,7 +22,7 @@ const WORKFLOWS: { id: AgentWorkflow; title: string; blurb: string; icon: typeof
   { id: "quickspec", title: "Quick Spec", blurb: "Clarify, then auto-generate", icon: Zap },
 ];
 
-export function ChatThread() {
+export function ChatThread({ folder }: { folder?: string | null }) {
   const chats = useSutra((s) => s.chats);
   const activeId = useSutra((s) => s.activeId);
   const spec = useSutra((s) => s.spec);
@@ -37,9 +39,61 @@ export function ChatThread() {
   const [draft, setDraft] = useState("");
   const [workflow, setWorkflow] = useState<AgentWorkflow>("spec");
   const [autopilot, setAutopilot] = useState(false);
+  const [mode, setMode] = useState<AgentMode>("manual");
+  const [pendingTool, setPendingTool] = useState<{ prompt: string; pending: AgentPending } | null>(null);
   const chat = chats.find((c) => c.id === activeId);
   const models = loadPlatform().models.filter((m) => m.enabled);
   const empty = (chat?.messages ?? []).filter((m) => m.role !== "system").length === 0 && !spec;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Tab" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) {
+          e.preventDefault();
+          setMode((m) => nextAgentMode(m));
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  async function agent(prompt: string, approved?: AgentPending) {
+    if (!folder) return;
+    setBusy(true);
+    const res = await runAgent({
+      data: {
+        folder,
+        prompt:
+          workflow === "plan" || mode === "plan" ? `Plan only. Do not edit files. ${prompt}` : prompt,
+        mode: autopilot ? "acceptEdits" : workflow === "plan" ? "plan" : mode,
+        modelId: loadPlatform().defaultModelId,
+        approved,
+      },
+    });
+    setBusy(false);
+    if (!res.ok) {
+      setError(res.error);
+      addMessage({ role: "assistant", text: res.error });
+      return;
+    }
+    if (res.trace.length) {
+      addMessage({
+        role: "assistant",
+        text: res.trace.map((t: AgentTrace) => `${t.ok ? "✓" : "✗"} ${t.name}: ${t.detail.slice(0, 180)}`).join("\n"),
+      });
+    }
+    if (res.pending) {
+      setPendingTool({ prompt, pending: res.pending });
+      addMessage({
+        role: "assistant",
+        text: `Allow ${res.pending.name} ${res.pending.args.path || res.pending.args.command || ""}?`,
+      });
+      return;
+    }
+    addMessage({ role: "assistant", text: res.text });
+  }
 
   async function send(text: string) {
     const prompt = text.trim();
@@ -48,15 +102,12 @@ export function ChatThread() {
     addMessage({ role: "user", text: prompt });
     setError(null);
 
+    if (folder) {
+      await agent(prompt);
+      return;
+    }
+
     if (!spec) {
-      const platform = loadPlatform();
-      if (platform.keycloak.enabled && !loadUser()) {
-        addMessage({
-          role: "assistant",
-          text: "Keycloak is required. Open Settings → Identity and sign in, then send again.",
-        });
-        return;
-      }
       setBusy(true);
       const prefixed =
         workflow === "bugfix"
@@ -183,6 +234,31 @@ export function ChatThread() {
                 {error}
               </li>
             ) : null}
+            {pendingTool ? (
+              <li className="flex gap-2">
+                <button
+                  type="button"
+                  className="h-8 rounded-sm bg-accent px-3 text-xs text-accent-fg"
+                  onClick={() => {
+                    const p = pendingTool;
+                    setPendingTool(null);
+                    void agent(p.prompt, p.pending);
+                  }}
+                >
+                  Allow
+                </button>
+                <button
+                  type="button"
+                  className="h-8 rounded-sm bg-raised px-3 text-xs"
+                  onClick={() => {
+                    setPendingTool(null);
+                    addMessage({ role: "assistant", text: "Denied." });
+                  }}
+                >
+                  Deny
+                </button>
+              </li>
+            ) : null}
           </ol>
         )}
       </div>
@@ -197,7 +273,7 @@ export function ChatThread() {
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Ask a question or describe a task…"
+            placeholder={folder ? "Ask Sutra Code to read, edit, or run…" : "Ask a question or describe a task…"}
             className="min-h-16 border-0 bg-transparent shadow-none"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -207,6 +283,18 @@ export function ChatThread() {
             }}
           />
           <div className="mt-1 flex items-center gap-2 text-xs text-subtle">
+            <select
+              className="h-7 rounded-sm bg-surface px-2"
+              value={mode}
+              onChange={(e) => setMode(e.target.value as AgentMode)}
+              title="Shift+Tab cycles modes"
+            >
+              {AGENT_MODES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
             <select className="h-7 rounded-sm bg-surface px-2" defaultValue={loadPlatform().defaultModelId}>
               {models.map((m) => (
                 <option key={m.id} value={m.id}>

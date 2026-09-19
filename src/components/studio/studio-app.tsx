@@ -509,7 +509,7 @@ export function StudioApp() {
             <div className="max-h-24 overflow-hidden border-b border-border">
               <ChatSidebar />
             </div>
-            <ChatThread />
+            <ChatThread folder={ws.activeFolder} />
           </aside>
         ) : null}
       </div>

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { createServerFn } from "@tanstack/react-start";
-import { contained, isProtectedRel, safePathEnv, safeRel } from "./shell-safe";
+import { contained, isProtectedRel, safePathEnv, safeRel, tokenize, hasMetacharacters, ALLOWED_BINS } from "./shell-safe";
 
 const execFileAsync = promisify(execFile);
 const SKIP = new Set(["node_modules", ".git", "dist", "release", ".vercel"]);
@@ -222,3 +222,25 @@ export const gitCommitFolder = createServerFn({ method: "POST" })
     if (data.email) args.unshift("-c", `user.email=${data.email}`);
     return git(cwd, args);
   });
+
+export async function execInFolder(folder: string, command: string) {
+  const cwd = await assertFolder(folder);
+  if (hasMetacharacters(command)) return { ok: false as const, stdout: "", stderr: "Pipes and chaining are blocked." };
+  const tokens = tokenize(command);
+  const bin = (tokens[0] ?? "").toLowerCase();
+  if (!ALLOWED_BINS.has(bin)) return { ok: false as const, stdout: "", stderr: `'${bin}' is not allowed.` };
+  const args = tokens.slice(1);
+  const exe = process.platform === "win32" && (bin === "npm" || bin === "npx") ? `${bin}.cmd` : bin === "python3" && process.platform === "win32" ? "python" : bin;
+  try {
+    const r = await execFileAsync(exe, args, {
+      cwd,
+      timeout: 20_000,
+      windowsHide: true,
+      env: { ...process.env, PATH: safePathEnv(process.env.Path || process.env.PATH) },
+    });
+    return { ok: true as const, stdout: String(r.stdout).slice(0, 8000), stderr: String(r.stderr).slice(0, 4000) };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    return { ok: false as const, stdout: String(e.stdout ?? ""), stderr: String(e.stderr ?? e.message ?? "failed") };
+  }
+}
