@@ -1,6 +1,7 @@
 import { SutraMark } from "@/components/studio/sutra-mark";
 
 const ROWS: { label: string; keys: string[] }[] = [
+  { label: "Open Folder", keys: ["Ctrl", "K", "O"] },
   { label: "Open chat", keys: ["Ctrl", "Shift", "L"] },
   { label: "Show All Commands", keys: ["Ctrl", "Shift", "P"] },
   { label: "Go to File", keys: ["Ctrl", "P"] },

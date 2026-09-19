@@ -94,5 +94,8 @@ export function npmSubcommandOk(cmd: string | undefined) {
 }
 
 export function gitSubcommandOk(cmd: string | undefined) {
-  return !cmd || ["--version", "status", "log", "diff"].includes(cmd);
+  return (
+    !cmd ||
+    ["--version", "status", "log", "diff", "init", "add", "commit", "branch", "restore", "stash"].includes(cmd)
+  );
 }

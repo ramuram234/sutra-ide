@@ -17,6 +17,7 @@ import { keycloakAuthUrl, pkcePair } from "@/lib/sutra/oidc";
 import { displayName, loadUser, saveUser } from "@/lib/sutra/identity";
 import { listModelStatus } from "@/lib/sutra/model-router";
 import { desktopHealth } from "@/lib/sutra/run-command";
+import { loadGitUser, saveGitUser, type GitUser } from "@/lib/sutra/git-user";
 import { ThemePicker } from "@/components/studio/theme-picker";
 
 export const Route = createFileRoute("/settings")({ component: SettingsPage });
@@ -34,10 +35,9 @@ const KINDS: ModelProviderKind[] = [
 
 function SettingsPage() {
   const [cfg, setCfg] = useState<PlatformConfig>(DEFAULT_PLATFORM);
-  const [tab, setTab] = useState<"appearance" | "models" | "mcp" | "identity" | "quota">("appearance");
+  const [tab, setTab] = useState<"appearance" | "models" | "git" | "mcp">("appearance");
   const [keys, setKeys] = useState<Record<string, boolean>>({});
   const [health, setHealth] = useState<{ platform: string; workspace: string; node: string; keys: Record<string, boolean> } | null>(null);
-  const user = loadUser();
 
   useEffect(() => {
     setCfg(loadPlatform());
@@ -57,8 +57,8 @@ function SettingsPage() {
         <div>
           <p className="font-display text-3xl tracking-tight">Settings</p>
           <p className="mt-2 text-sm text-muted">
-            Models, MCP, Keycloak sign-in, token caps. Secrets stay in server env — this page stores
-            endpoints and client ids only. Signed in as <strong>{displayName(user)}</strong>.
+            Theme, models you connect, Git name for commits. No admin, identity server, or quota
+            screens — this is the user IDE.
           </p>
           <p className="mt-2 text-xs">
             <Link to="/guide" className="text-accent underline">
@@ -67,7 +67,7 @@ function SettingsPage() {
           </p>
         </div>
         <nav className="flex flex-wrap gap-1">
-          {(["appearance", "models", "mcp", "identity", "quota"] as const).map((t) => (
+          {(["appearance", "models", "git", "mcp"] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -103,9 +103,8 @@ function SettingsPage() {
           </section>
         ) : null}
         {tab === "models" ? <ModelsTab cfg={cfg} persist={persist} keys={keys} /> : null}
+        {tab === "git" ? <GitTab /> : null}
         {tab === "mcp" ? <McpTab cfg={cfg} persist={persist} /> : null}
-        {tab === "identity" ? <IdentityTab cfg={cfg} persist={persist} /> : null}
-        {tab === "quota" ? <QuotaTab cfg={cfg} persist={persist} /> : null}
       </main>
     </div>
   );
@@ -292,6 +291,38 @@ function McpTab({ cfg, persist }: { cfg: PlatformConfig; persist: (c: PlatformCo
       >
         Add HTTP MCP
       </Button>
+    </div>
+  );
+}
+
+function GitTab() {
+  const [user, setUser] = useState<GitUser>({ name: "", email: "" });
+  useEffect(() => setUser(loadGitUser()), []);
+  return (
+    <div className="grid gap-3">
+      <p className="text-sm text-muted">Used only for Git commits from Source Control. Not an admin login.</p>
+      <label className="grid gap-1 text-sm">
+        Name
+        <Input
+          value={user.name}
+          onChange={(e) => {
+            const next = { ...user, name: e.target.value };
+            setUser(next);
+            saveGitUser(next);
+          }}
+        />
+      </label>
+      <label className="grid gap-1 text-sm">
+        Email
+        <Input
+          value={user.email}
+          onChange={(e) => {
+            const next = { ...user, email: e.target.value };
+            setUser(next);
+            saveGitUser(next);
+          }}
+        />
+      </label>
     </div>
   );
 }

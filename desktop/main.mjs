@@ -50,6 +50,39 @@ ipcMain.on("sutra-theme", (_e, source) => {
   nativeTheme.themeSource = source === "light" || source === "dark" ? source : "system";
 });
 
+ipcMain.handle("sutra:openFolder", async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const r = await dialog.showOpenDialog(win ?? undefined, {
+    title: "Open Folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+
+ipcMain.handle("sutra:openFiles", async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const r = await dialog.showOpenDialog(win ?? undefined, {
+    title: "Open File",
+    properties: ["openFile", "multiSelections"],
+  });
+  return r.canceled ? [] : r.filePaths;
+});
+
+ipcMain.handle("sutra:saveAs", async (_e, name) => {
+  const win = BrowserWindow.getFocusedWindow();
+  const r = await dialog.showSaveDialog(win ?? undefined, {
+    title: "Save As",
+    defaultPath: name || "untitled.txt",
+  });
+  return r.canceled ? null : r.filePath;
+});
+
+ipcMain.handle("sutra:newWindow", () => createWindow());
+ipcMain.handle("sutra:quit", () => {
+  if (child) child.kill();
+  app.quit();
+});
+
 async function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors;
   const win = new BrowserWindow({
@@ -70,7 +103,7 @@ async function createWindow() {
     return { action: "deny" };
   });
   try {
-    await startServer();
+    if (BrowserWindow.getAllWindows().length <= 1) await startServer();
     await win.loadURL(URL);
   } catch (err) {
     dialog.showErrorBox("Sutra", String(err?.message ?? err));

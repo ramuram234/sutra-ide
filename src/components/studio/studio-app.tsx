@@ -16,7 +16,7 @@ import type { SpecFile, StudioStage } from "@/lib/sutra/schema";
 import { Button } from "@/components/ui/button";
 import { BrowserPreview } from "@/components/studio/browser-preview";
 import { bootTerminal, TerminalPane } from "@/components/studio/terminal-pane";
-import { ActivityBar } from "@/components/studio/activity-bar";
+import { ActivityBar, type SidePanel } from "@/components/studio/activity-bar";
 import { WelcomePane } from "@/components/studio/welcome-pane";
 import { ChatSidebar } from "@/components/studio/chat-sidebar";
 import { ChatThread } from "@/components/studio/chat-thread";
@@ -25,6 +25,9 @@ import { ShortcutsHelp } from "@/components/studio/shortcuts-help";
 import { useIdeShortcuts } from "@/components/studio/use-ide-shortcuts";
 import { CommandPalette } from "@/components/studio/command-palette";
 import { KeybindingsEditor } from "@/components/studio/keybindings-editor";
+import { OpenFolderDialog } from "@/components/studio/open-folder-dialog";
+import { ScmPanel } from "@/components/studio/scm-panel";
+import { useWorkspace } from "@/components/studio/use-workspace";
 import { loadUserBindings, shortcutLabel, type IdeAction, type Keybinding } from "@/lib/sutra/keymap";
 import { saveThemePref } from "@/lib/sutra/theme";
 import { ThemePicker } from "@/components/studio/theme-picker";
@@ -60,6 +63,7 @@ export function StudioApp() {
   } = store;
   const [codeTab, setCodeTab] = useState<"react" | "api">("react");
   const [showExplorer, setShowExplorer] = useState(true);
+  const [side, setSide] = useState<SidePanel>("explorer");
   const [showChat, setShowChat] = useState(true);
   const [showTerm, setShowTerm] = useState(true);
   const [showKeys, setShowKeys] = useState(false);
@@ -68,6 +72,8 @@ export function StudioApp() {
   const [find, setFind] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [userKeys, setUserKeys] = useState<Keybinding[]>([]);
+  const [zoom, setZoom] = useState(1);
+  const ws = useWorkspace();
   const [openTabs, setOpenTabs] = useState<SpecFile[]>([]);
   const files = spec ? generateFiles(spec) : [];
 
@@ -125,8 +131,10 @@ export function StudioApp() {
       showKeybindings: () => openFile("keybindings", spec ? stage : "prompt"),
       quickOpen: () => setQuickOpen(true),
       save: () => {
-        setSaved(true);
-        window.setTimeout(() => setSaved(false), 1200);
+        void ws.saveDoc().then((ok) => {
+          setSaved(Boolean(ok));
+          window.setTimeout(() => setSaved(false), 1200);
+        });
       },
       find: () => setFind(""),
       findInFiles: () => setPalette(true),
@@ -152,49 +160,73 @@ export function StudioApp() {
       id: "file",
       label: "File",
       items: [
-        { label: "New Chat", shortcut: shortcutLabel("newChat", os, userKeys), onSelect: () => newChatTab() },
-        { label: "Close Editor", shortcut: shortcutLabel("closeEditor", os, userKeys), onSelect: () => setOpenTabs((t) => t.filter((x) => x !== file)) },
+        { label: "New File", shortcut: "Ctrl+N", onSelect: () => void ws.newFile() },
+        { label: "New Window", shortcut: "Ctrl+Shift+N", onSelect: () => void ws.newWindow() },
         { sep: true, label: "" },
-        { label: "Save", shortcut: shortcutLabel("save", os, userKeys), onSelect: () => setSaved(true) },
-        { label: "Command Palette…", shortcut: shortcutLabel("commandPalette", os, userKeys), onSelect: () => setPalette(true) },
-        { label: "Preferences: Keyboard Shortcuts", shortcut: shortcutLabel("showKeybindings", os, userKeys), onSelect: () => openFile("keybindings", spec ? stage : "prompt") },
-        { label: "Settings…", onSelect: () => { window.location.href = "/settings"; } },
-        { label: "Developer guide", onSelect: () => { window.location.href = "/guide"; } },
-        { label: "Extensions…", onSelect: () => { window.location.href = "/extensions"; } },
+        { label: "Open File…", shortcut: "Ctrl+O", onSelect: () => void ws.openFileDialog() },
+        { label: "Open Folder…", shortcut: "Ctrl+K Ctrl+O", onSelect: () => void ws.openFolder() },
+        { label: "Add Folder to Workspace…", onSelect: () => void ws.addFolder() },
+        { sep: true, label: "" },
+        { label: "Save", shortcut: shortcutLabel("save", os, userKeys), onSelect: () => void ws.saveDoc().then((ok) => ok && setSaved(true)) },
+        { label: "Save As…", shortcut: "Ctrl+Shift+S", onSelect: () => void ws.saveDocAs() },
+        { sep: true, label: "" },
+        { label: "Close Editor", shortcut: shortcutLabel("closeEditor", os, userKeys), onSelect: () => {
+          if (ws.activeDoc) ws.closeDoc(ws.activeDoc);
+          else setOpenTabs((t) => t.filter((x) => x !== file));
+        } },
+        { label: "Close Folder", onSelect: () => void ws.closeFolder() },
+        { sep: true, label: "" },
+        { label: "Settings…", shortcut: shortcutLabel("showSettings", os, userKeys), onSelect: () => { window.location.href = "/settings"; } },
+        { label: "Exit", onSelect: () => void ws.quit() },
       ],
     },
     {
       id: "edit",
       label: "Edit",
       items: [
+        { label: "Undo", shortcut: "Ctrl+Z", onSelect: () => document.execCommand("undo") },
+        { label: "Redo", shortcut: "Ctrl+Y", onSelect: () => document.execCommand("redo") },
+        { sep: true, label: "" },
+        { label: "Cut", shortcut: "Ctrl+X", onSelect: () => document.execCommand("cut") },
+        { label: "Copy", shortcut: "Ctrl+C", onSelect: () => document.execCommand("copy") },
+        { label: "Paste", shortcut: "Ctrl+V", onSelect: () => document.execCommand("paste") },
+        { sep: true, label: "" },
         { label: "Find", shortcut: shortcutLabel("find", os, userKeys), onSelect: () => setFind("") },
-        { label: "Undo", shortcut: "Ctrl+Z" },
-        { label: "Copy", shortcut: "Ctrl+C" },
-        { label: "Paste", shortcut: "Ctrl+V" },
+        { label: "Find in Files", shortcut: shortcutLabel("findInFiles", os, userKeys), onSelect: () => { setSide("search"); setShowExplorer(true); } },
       ],
     },
     {
       id: "selection",
       label: "Selection",
-      items: [{ label: "Select All", shortcut: "Ctrl+A" }],
+      items: [{ label: "Select All", shortcut: "Ctrl+A", onSelect: () => document.execCommand("selectAll") }],
     },
     {
       id: "view",
       label: "View",
       items: [
-        { label: showExplorer ? "Hide Explorer" : "Show Explorer", shortcut: shortcutLabel("toggleExplorer", os, userKeys), onSelect: () => setShowExplorer((v) => !v) },
-        { label: showChat ? "Hide Chat" : "Show Chat", shortcut: shortcutLabel("toggleChat", os, userKeys), onSelect: () => setShowChat((v) => !v) },
+        { label: "Command Palette…", shortcut: shortcutLabel("commandPalette", os, userKeys), onSelect: () => setPalette(true) },
+        { sep: true, label: "" },
+        { label: "Explorer", onSelect: () => { setSide("explorer"); setShowExplorer(true); } },
+        { label: "Search", onSelect: () => { setSide("search"); setShowExplorer(true); } },
+        { label: "Source Control", onSelect: () => { setSide("scm"); setShowExplorer(true); } },
+        { label: showChat ? "Hide Agent Focus" : "Show Agent Focus", shortcut: shortcutLabel("toggleChat", os, userKeys), onSelect: () => setShowChat((v) => !v) },
         { label: showTerm ? "Hide Terminal" : "Show Terminal", shortcut: shortcutLabel("toggleTerminal", os, userKeys), onSelect: () => setShowTerm((v) => !v) },
         { sep: true, label: "" },
-        { label: "Theme: System default", onSelect: () => saveThemePref("system") },
-        { label: "Theme: Light", onSelect: () => saveThemePref("light") },
-        { label: "Theme: Dark", onSelect: () => saveThemePref("dark") },
+        { label: "Appearance: System", onSelect: () => saveThemePref("system") },
+        { label: "Appearance: Light", onSelect: () => saveThemePref("light") },
+        { label: "Appearance: Dark", onSelect: () => saveThemePref("dark") },
+        { sep: true, label: "" },
+        { label: "Zoom In", onSelect: () => setZoom((z) => Math.min(1.4, z + 0.1)) },
+        { label: "Zoom Out", onSelect: () => setZoom((z) => Math.max(0.8, z - 0.1)) },
+        { label: "Toggle Full Screen", shortcut: shortcutLabel("toggleFullscreen", os, userKeys), onSelect: () => void document.documentElement.requestFullscreen?.() },
       ],
     },
     {
       id: "go",
       label: "Go",
       items: [
+        { label: "Back", shortcut: "Alt+Left", onSelect: () => history.back() },
+        { label: "Forward", shortcut: "Alt+Right", onSelect: () => history.forward() },
         { label: "Go to File…", shortcut: shortcutLabel("quickOpen", os, userKeys), onSelect: () => setQuickOpen(true) },
         { label: "requirements.md", onSelect: () => spec && openFile("requirements", "requirements") },
         { label: "design.md", onSelect: () => spec && canOpen("design") && openFile("design", "design") },
@@ -204,13 +236,14 @@ export function StudioApp() {
     {
       id: "run",
       label: "Run",
-      items: [{ label: "Run Tasks", shortcut: shortcutLabel("runTasks", os, userKeys), onSelect: () => void runTasks() }],
+      items: [{ label: "Start Debugging / Run Tasks", shortcut: shortcutLabel("runTasks", os, userKeys), onSelect: () => void runTasks() }],
     },
     {
       id: "terminal",
       label: "Terminal",
       items: [
         { label: "New Terminal", onSelect: () => setShowTerm(true) },
+        { label: "Clear Terminal", onSelect: () => store.clearTerm() },
         { label: "Close Terminal", onSelect: () => setShowTerm(false) },
       ],
     },
@@ -219,8 +252,7 @@ export function StudioApp() {
       label: "Help",
       items: [
         { label: "Keyboard Shortcuts", shortcut: shortcutLabel("showShortcuts", os, userKeys), onSelect: () => setShowKeys(true) },
-        { label: "Open Keyboard Shortcuts editor", shortcut: shortcutLabel("showKeybindings", os, userKeys), onSelect: () => openFile("keybindings", spec ? stage : "prompt") },
-        { label: "Sutra IDE — specs, editor, chat, approved shell" },
+        { label: "About Sutra", onSelect: () => setShowKeys(true) },
       ],
     },
   ];
@@ -229,10 +261,10 @@ export function StudioApp() {
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
       <MenuBar menus={menus} />
       <div className="flex h-9 items-center gap-2 border-b border-border bg-surface px-2">
-        <button type="button" className="px-1 text-subtle" aria-label="Back">
+        <button type="button" className="px-1 text-subtle" aria-label="Back" onClick={() => history.back()}>
           ←
         </button>
-        <button type="button" className="px-1 text-subtle" aria-label="Forward">
+        <button type="button" className="px-1 text-subtle" aria-label="Forward" onClick={() => history.forward()}>
           →
         </button>
         <button
@@ -241,7 +273,7 @@ export function StudioApp() {
           className="flex h-7 flex-1 items-center justify-center gap-2 rounded-sm bg-raised text-xs text-subtle"
         >
           <span>⌕</span>
-          {spec ? spec.name : "Untitled (Workspace)"}
+          {spec ? spec.name : ws.activeFolder ? ws.activeFolder.split(/[/\\]/).pop() : "Untitled (Workspace)"}
         </button>
         <button
           type="button"
@@ -256,54 +288,115 @@ export function StudioApp() {
       </div>
       <div className="flex min-h-0 flex-1">
         <ActivityBar
-          explorer={showExplorer}
+          side={side}
           chat={showChat}
-          onExplorer={() => setShowExplorer((v) => !v)}
+          onSide={(s) => {
+            setSide(s);
+            setShowExplorer(true);
+          }}
           onChat={() => setShowChat((v) => !v)}
-          onSearch={() => setPalette(true)}
         />
         {showExplorer ? (
           <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
-            <p className="px-3 py-2 text-[11px] font-medium tracking-widest text-subtle">EXPLORER</p>
-            <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
-              <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
-                {spec ? spec.slug : "Untitled (Workspace)"}
-              </p>
-              {spec ? (
-                <SpecTree
-                  file={file}
-                  stage={stage}
-                  setFile={(f) => openFile(f, fileStage(f, stage))}
-                  setStage={setStage}
-                  hasCode={stage === "implement"}
-                  srcNames={files.map((f) => f.path.split("/").pop() ?? f.path)}
+            {side === "scm" ? (
+              <ScmPanel
+                folder={ws.activeFolder}
+                onOpen={(rel) => ws.activeFolder && void ws.openDisk(ws.activeFolder, rel)}
+              />
+            ) : side === "search" ? (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <p className="px-3 py-2 text-[11px] font-medium tracking-widest text-subtle">SEARCH</p>
+                <input
+                  className="mx-2 h-8 rounded-sm bg-raised px-2 text-xs outline-none"
+                  placeholder="Search files"
+                  value={find ?? ""}
+                  onChange={(e) => setFind(e.target.value)}
                 />
-              ) : (
-                <>
-                  <TreeItem
-                    active={file === "keybindings"}
-                    locked={false}
-                    onClick={() => openFile("keybindings", "prompt")}
-                  >
-                    keybindings.json
-                  </TreeItem>
-                  <p className="px-2 pt-2 text-xs text-subtle">Generate a module from Agent Focus → Spec.</p>
-                </>
-              )}
-            </div>
-            <div className="border-t border-border px-3 py-2">
-              <p className="text-[11px] font-medium tracking-widest text-subtle">TIMELINE</p>
-              <p className="mt-2 text-xs text-subtle">The active editor cannot provide timeline information.</p>
-            </div>
+                <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-1">
+                  {ws.entries
+                    .filter((e) => !e.dir && (!find || e.path.toLowerCase().includes(find.toLowerCase())))
+                    .slice(0, 80)
+                    .map((e) => (
+                      <button
+                        key={e.path}
+                        type="button"
+                        className="block w-full truncate px-2 py-1 text-left text-xs hover:bg-raised"
+                        onClick={() => ws.activeFolder && void ws.openDisk(ws.activeFolder, e.path)}
+                      >
+                        {e.path}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="px-3 py-2 text-[11px] font-medium tracking-widest text-subtle">EXPLORER</p>
+                <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+                  <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
+                    {ws.activeFolder ? ws.activeFolder.split(/[/\\]/).pop() : spec ? spec.slug : "No folder"}
+                  </p>
+                  {ws.entries.length ? (
+                    ws.entries
+                      .filter((e) => !e.dir)
+                      .map((e) => (
+                        <TreeItem
+                          key={e.path}
+                          active={ws.activeDoc === `${ws.activeFolder}::${e.path}`}
+                          locked={false}
+                          onClick={() => ws.activeFolder && void ws.openDisk(ws.activeFolder, e.path)}
+                        >
+                          {e.path}
+                        </TreeItem>
+                      ))
+                  ) : spec ? (
+                    <SpecTree
+                      file={file}
+                      stage={stage}
+                      setFile={(f) => openFile(f, fileStage(f, stage))}
+                      setStage={setStage}
+                      hasCode={stage === "implement"}
+                      srcNames={files.map((f) => f.path.split("/").pop() ?? f.path)}
+                    />
+                  ) : (
+                    <p className="px-2 pt-2 text-xs text-subtle">File → Open Folder… to add a project.</p>
+                  )}
+                </div>
+                <div className="border-t border-border px-3 py-2">
+                  <p className="text-[11px] font-medium tracking-widest text-subtle">TIMELINE</p>
+                  <p className="mt-2 text-xs text-subtle">Local Git history appears after you open a repository.</p>
+                </div>
+              </>
+            )}
           </aside>
         ) : null}
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex h-9 items-center overflow-x-auto border-b border-border">
-            {openTabs.length === 0 ? (
+            {openTabs.length === 0 && ws.docs.length === 0 ? (
               <p className="px-3 text-xs text-subtle">Welcome</p>
             ) : (
-              openTabs.map((tab) => (
+              <>
+                {ws.docs.map((d) => {
+                  const key = `${d.folder}::${d.rel}`;
+                  return (
+                    <div
+                      key={key}
+                      className={cn(
+                        "flex h-9 shrink-0 items-center border-r border-border",
+                        ws.activeDoc === key ? "bg-raised" : "",
+                      )}
+                    >
+                      <button type="button" onClick={() => void ws.openDisk(d.folder, d.rel)} className="h-9 px-3 font-mono text-xs">
+                        {d.rel.split("/").pop()}
+                        {d.dirty ? " •" : ""}
+                      </button>
+                      <button type="button" aria-label={`Close ${d.rel}`} onClick={() => ws.closeDoc(key)} className="h-9 w-7 text-subtle hover:text-fg">
+                        <X className="mx-auto size-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+                {openTabs.map((tab) => (
                 <div
                   key={tab}
                   className={cn(
@@ -327,7 +420,8 @@ export function StudioApp() {
                     <X className="mx-auto size-3.5" />
                   </button>
                 </div>
-              ))
+              ))}
+              </>
             )}
           </div>
           <div className="flex min-h-0 flex-1 flex-col">
@@ -345,17 +439,28 @@ export function StudioApp() {
                 />
               </div>
             ) : null}
-            {openTabs.length === 0 && !spec ? (
+            {ws.activeDoc ? (
+              <textarea
+                className="min-h-0 flex-1 resize-none bg-bg p-4 font-mono text-sm outline-none"
+                style={{ fontSize: `${13 * zoom}px` }}
+                value={ws.docs.find((d) => `${d.folder}::${d.rel}` === ws.activeDoc)?.content ?? ""}
+                onChange={(e) => ws.editDoc(e.target.value)}
+              />
+            ) : openTabs.length === 0 && !spec ? (
               <WelcomePane
                 onCommand={(label) => {
                   if (label === "Open chat") setShowChat(true);
                   if (label === "Show All Commands") setPalette(true);
                   if (label === "Go to File") setQuickOpen(true);
-                  if (label === "Find in Files") setFind("");
+                  if (label === "Find in Files") {
+                    setSide("search");
+                    setShowExplorer(true);
+                  }
                   if (label === "Start Debugging") void runTasks();
                   if (label === "Toggle Terminal") setShowTerm((v) => !v);
                   if (label === "Show Settings") window.location.href = "/settings";
                   if (label === "Toggle Full Screen") void document.documentElement.requestFullscreen?.();
+                  if (label === "Open Folder") void ws.openFolder();
                 }}
               />
             ) : (
@@ -412,10 +517,20 @@ export function StudioApp() {
         <span>{os === "macos" ? "macOS" : "Windows"}</span>
         {spec ? <span>{stackLabel(spec.stack)}</span> : <span>Ready</span>}
         {saved ? <span className="text-ok">Saved</span> : null}
+        {ws.notice ? <span className="text-ok">{ws.notice}</span> : null}
+        {ws.activeFolder ? <span className="truncate">{ws.activeFolder}</span> : null}
         <span className="flex-1" />
         <ThemePicker compact />
       </footer>
       {showKeys ? <ShortcutsHelp os={os} onClose={() => setShowKeys(false)} /> : null}
+      {ws.folderMode ? (
+        <OpenFolderDialog
+          title={ws.folderMode === "add" ? "Add Folder to Workspace" : "Open Folder"}
+          home={ws.home}
+          onCancel={() => ws.setFolderMode(null)}
+          onPick={(folder, create) => void ws.attachFolder(folder, create)}
+        />
+      ) : null}
       {palette ? (
         <CommandPalette
           onClose={() => setPalette(false)}
@@ -431,7 +546,11 @@ export function StudioApp() {
               showShortcuts: () => setShowKeys(true),
               showKeybindings: () => openFile("keybindings", spec ? stage : "prompt"),
               quickOpen: () => setQuickOpen(true),
-              save: () => setSaved(true),
+              save: () => {
+        void ws.saveDoc().then((ok) => {
+          if (ok) setSaved(true);
+        });
+      },
               find: () => setFind(""),
               findInFiles: () => setPalette(true),
               showSettings: () => {

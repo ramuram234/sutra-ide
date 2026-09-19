@@ -45,7 +45,7 @@ export function MenuBar({
                 item.sep ? (
                   <li key={i} className="my-1 border-t border-border" />
                 ) : (
-                  <li key={item.label}>
+                  <li key={`${item.label}-${i}`}>
                     <button
                       type="button"
                       disabled={!item.onSelect}

@@ -1,31 +1,31 @@
 import type { ReactNode } from "react";
-import { Blocks, Folder, GitBranch, Search, Settings, Sparkles, User } from "lucide-react";
+import { Blocks, Folder, GitBranch, Search, Settings, Sparkles } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
+export type SidePanel = "explorer" | "search" | "scm" | "chat";
+
 export function ActivityBar({
-  explorer,
+  side,
   chat,
-  onExplorer,
+  onSide,
   onChat,
-  onSearch,
 }: {
-  explorer: boolean;
+  side: SidePanel;
   chat: boolean;
-  onExplorer: () => void;
+  onSide: (s: SidePanel) => void;
   onChat: () => void;
-  onSearch: () => void;
 }) {
   const navigate = useNavigate();
   return (
     <nav className="flex w-12 shrink-0 flex-col items-center bg-[var(--color-activity)] py-2">
-      <IconBtn label="Explorer" active={explorer} onClick={onExplorer}>
+      <IconBtn label="Explorer" active={side === "explorer"} onClick={() => onSide("explorer")}>
         <Folder className="size-5" />
       </IconBtn>
-      <IconBtn label="Search" onClick={onSearch}>
+      <IconBtn label="Search" active={side === "search"} onClick={() => onSide("search")}>
         <Search className="size-5" />
       </IconBtn>
-      <IconBtn label="Source Control">
+      <IconBtn label="Source Control" active={side === "scm"} onClick={() => onSide("scm")}>
         <GitBranch className="size-5" />
       </IconBtn>
       <IconBtn label="Agent Focus" active={chat} onClick={onChat}>
@@ -35,9 +35,6 @@ export function ActivityBar({
         <Blocks className="size-5" />
       </IconBtn>
       <span className="flex-1" />
-      <IconBtn label="Account" onClick={() => navigate({ to: "/settings" })}>
-        <User className="size-5" />
-      </IconBtn>
       <IconBtn label="Settings" onClick={() => navigate({ to: "/settings" })}>
         <Settings className="size-5" />
       </IconBtn>
