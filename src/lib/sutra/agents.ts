@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { AgentMode } from "./agent-modes";
 import { listFolder, readWorkspaceFile, writeWorkspaceFile } from "./workspace-io";
 
-export type AgentTool = "read" | "write" | "edit" | "glob" | "grep" | "bash";
+export type AgentTool = "read" | "write" | "edit" | "glob" | "grep" | "bash" | "todo" | "spawn";
 
 export type AgentDef = {
   id: string;
@@ -14,7 +14,7 @@ export type AgentDef = {
   builtin: boolean;
 };
 
-const ALL: AgentTool[] = ["read", "write", "edit", "glob", "grep", "bash"];
+const ALL: AgentTool[] = ["read", "write", "edit", "glob", "grep", "bash", "todo", "spawn"];
 const READ: AgentTool[] = ["read", "glob", "grep", "bash"];
 
 export const TALK_TO = ["team", "default", "nidhi", "budget"] as const;
@@ -26,7 +26,8 @@ export const BUILTIN_AGENTS: AgentDef[] = [
     blurb: "Office team: spec, UI, API, QA + Nidhi/Budget when relevant",
     tools: ALL,
     mode: "acceptEdits",
-    system: "You are Sutra Team lead. Decompose the user's product request, assign workers, ship a working module.",
+    system:
+      "You are the team lead. You have no catalog of product tasks. For every user request: glob/grep/read the real repo, write your own todos, spawn workers only for large slices, then edit existing code. Never scaffold a second app alongside the stack you found.",
     builtin: true,
   },
   {

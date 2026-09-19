@@ -36,7 +36,7 @@ export function KiroPanel({
           </p>
         ))}
         <p className="px-2 pt-1 text-[10px] text-subtle">
-          Agents run outside the workbench (own context). Chat only gets a summary. Explorer always reads the folder first.
+          No baked-in product tasks. Lead reads the repo, writes its own todos, may spawn workers.
         </p>
       </Section>
       <Section title="SPECS">

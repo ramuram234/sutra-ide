@@ -3,7 +3,6 @@ import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { canAutoShell, canAutoWrite, type AgentMode } from "./agent-modes";
 import { findAgent, loadProjectAgents, type AgentTool } from "./agents";
-import { scanWorkspace } from "./explore";
 import { DEFAULT_PLATFORM } from "./platform-config";
 import { chatWithTools, type ToolDef } from "./model-router";
 import { evaluate } from "./permissions";
@@ -75,6 +74,30 @@ const TOOLS: ToolDef[] = [
       parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "todo",
+      description: "Replace the current task list with items you invented for THIS request. The host has no product catalog.",
+      parameters: {
+        type: "object",
+        properties: { items: { type: "string", description: "Markdown checklist" } },
+        required: ["items"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "spawn",
+      description: "Run a worker in a separate context on one goal. Worker cannot spawn further.",
+      parameters: {
+        type: "object",
+        properties: { goal: { type: "string" } },
+        required: ["goal"],
+      },
+    },
+  },
 ];
 
 export type AgentTrace = { name: string; ok: boolean; detail: string };
@@ -120,6 +143,7 @@ async function execTool(
   args: Record<string, string>,
   approved: boolean,
   allowed: AgentTool[],
+  depth = 0,
 ): Promise<{ ok: boolean; detail: string; pending?: AgentPending }> {
   if (!allowed.includes(name as AgentTool)) {
     return { ok: false, detail: `Agent is not allowed to use ${name}.` };
@@ -182,12 +206,100 @@ async function execTool(
     const r = await execInFolder(folder, command);
     return { ok: r.ok, detail: `${r.stdout}\n${r.stderr}`.trim().slice(0, 8_000) };
   }
+  if (name === "todo") {
+    const items = args.items || "";
+    await writeWorkspaceFile({ data: { folder, rel: ".sutra/todos.md", content: `# Todos for this request\n\n${items}\n` } });
+    return { ok: true, detail: items.slice(0, 1500) || "(empty todo list)" };
+  }
+  if (name === "spawn") {
+    if (depth >= 1) return { ok: false, detail: "Workers cannot spawn further workers." };
+    const inner = await runLoop({
+      folder,
+      mode,
+      modelId: undefined,
+      system: `You are a worker with your own context. You are not the IDE. Complete this goal only. Use read/grep/glob then edit. Do not spawn.`,
+      prompt: args.goal || "",
+      tools: TOOLS.filter((t) => t.function.name !== "spawn"),
+      allowed: allowed.filter((t) => t !== "spawn"),
+      depth: 1,
+      rounds: 6,
+    });
+    if (!inner.ok) return { ok: false, detail: inner.error };
+    return { ok: true, detail: `${inner.text}\n${inner.trace.map((t) => `${t.name}: ${t.detail}`).join("\n")}`.slice(0, 8000) };
+  }
   return { ok: false, detail: `Unknown tool ${name}` };
 }
 
 function resolveEndpoint(modelId?: string) {
   const all = DEFAULT_PLATFORM.models;
   return all.find((m) => m.id === modelId && m.enabled) ?? all.find((m) => m.enabled) ?? all[0]!;
+}
+
+type LoopOk = { ok: true; text: string; trace: AgentTrace[]; pending?: AgentPending };
+type LoopFail = { ok: false; error: string };
+
+async function runLoop(input: {
+  folder: string;
+  mode: AgentMode;
+  modelId?: string;
+  system: string;
+  prompt: string;
+  tools: ToolDef[];
+  allowed: AgentTool[];
+  approved?: AgentPending;
+  depth: number;
+  rounds: number;
+}): Promise<LoopOk | LoopFail> {
+  const messages: unknown[] = [
+    { role: "system", content: input.system },
+    { role: "user", content: input.prompt },
+  ];
+  const trace: AgentTrace[] = [];
+  let approved = Boolean(input.approved);
+
+  if (input.approved) {
+    const done = await execTool(input.folder, input.mode, input.approved.name, input.approved.args, true, input.allowed, input.depth);
+    trace.push({ name: input.approved.name, ok: done.ok, detail: done.detail.slice(0, 400) });
+    messages.push({
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "approved", type: "function", function: { name: input.approved.name, arguments: JSON.stringify(input.approved.args) } }],
+    });
+    messages.push({ role: "tool", tool_call_id: "approved", content: done.detail.slice(0, 8000) });
+  }
+
+  for (let i = 0; i < input.rounds; i++) {
+    const chat = await chatWithTools(resolveEndpoint(input.modelId), messages, input.tools);
+    if (!chat.ok) return { ok: false, error: chat.error };
+
+    let calls = chat.toolCalls ?? [];
+    if (!calls.length && chat.text) {
+      const fb = parseFallback(chat.text);
+      if (fb?.final) return { ok: true, text: fb.final, trace };
+      if (fb?.tool) calls = [{ id: `fb_${i}`, name: fb.tool, arguments: JSON.stringify(fb.args ?? {}) }];
+    }
+    if (!calls.length) return { ok: true, text: chat.text || "Done.", trace };
+
+    messages.push({
+      role: "assistant",
+      content: chat.text || null,
+      tool_calls: calls.map((c) => ({
+        id: c.id,
+        type: "function",
+        function: { name: c.name, arguments: c.arguments },
+      })),
+    });
+
+    for (const call of calls) {
+      const args = parseArgs(call.arguments);
+      const result = await execTool(input.folder, input.mode, call.name, args, approved, input.allowed, input.depth);
+      if (result.pending) return { ok: true, text: chat.text || `Need approval to ${call.name}.`, trace, pending: result.pending };
+      trace.push({ name: call.name, ok: result.ok, detail: result.detail.slice(0, 400) });
+      messages.push({ role: "tool", tool_call_id: call.id, content: result.detail.slice(0, 8000) });
+    }
+    approved = false;
+  }
+  return { ok: true, text: `Stopped after ${input.rounds} tool rounds. Ask me to continue.`, trace };
 }
 
 export const runAgent = createServerFn({ method: "POST" })
@@ -208,22 +320,22 @@ export const runAgent = createServerFn({ method: "POST" })
     history: input.history ?? [],
     approved: input.approved,
   }))
-  .handler(async ({ data }): Promise<{
-    ok: true;
-    text: string;
-    trace: AgentTrace[];
-    pending?: AgentPending;
-  } | { ok: false; error: string }> => {
+  .handler(async ({ data }): Promise<LoopOk | LoopFail> => {
     const extra = await loadProjectAgents({ data: { folder: data.folder } });
     const profile = findAgent(data.agentId, extra);
     const tools = TOOLS.filter((t) => profile.tools.includes(t.function.name as AgentTool));
     const mode = profile.mode ?? data.mode;
     const mem = await memory(data.folder);
-    let briefing = "";
+    let index = "";
     try {
-      briefing = (await scanWorkspace(data.folder, data.prompt)).summary.slice(0, 6000);
+      const listed = await listFolder({ data: { folder: data.folder } });
+      index = listed.entries
+        .filter((e) => !e.dir)
+        .slice(0, 120)
+        .map((e) => e.path)
+        .join("\n");
     } catch {
-      briefing = "(workspace scan failed)";
+      index = "(open a folder first)";
     }
     const historyText = data.history
       .filter((m) => m.role !== "system")
@@ -231,70 +343,35 @@ export const runAgent = createServerFn({ method: "POST" })
       .map((m) => `${m.role}: ${m.text.slice(0, 300)}`)
       .join("\n");
     const system = `${profile.system}
-You run as a separate agent context — you are not the IDE UI.
-First use the workspace briefing (folders, files, JPA entities/columns). Do not invent tables that already exist.
-Then use tools (read/grep) to confirm, then edit. Prefer extending existing Spring repositories over new stacks.
-Permission mode: ${mode}.
-Allowed tools: ${profile.tools.join(", ")}.
-${mode === "plan" ? "Do not edit source files. Research and propose a plan." : ""}
-Workspace: ${data.folder}
 
-## Workspace briefing
-${briefing}
+You are a coding agent in a separate context from the IDE. The host does not know this product. There is no built-in unpaid/leave/budget recipe.
 
-## Chat history
+For every request:
+1. glob / grep / read until you know what already exists
+2. todo — write YOUR task list for this request
+3. edit/write to complete those todos (spawn a worker only for a large independent slice)
+4. Prefer extending the stack you found. Do not invent a parallel app.
+
+File index (names only — not schema. Open files to learn columns/APIs):
+${index || "(empty)"}
+
+Chat history:
 ${historyText || "(none)"}
 
+Workspace: ${data.folder}
+Permission mode: ${mode}. ${mode === "plan" ? "Read only — do not edit." : ""}
 ${mem}`;
 
-    const messages: unknown[] = [
-      { role: "system", content: system },
-      { role: "user", content: data.prompt },
-    ];
-    const trace: AgentTrace[] = [];
-    let approved = Boolean(data.approved);
-
-    if (data.approved) {
-      const done = await execTool(data.folder, mode, data.approved.name, data.approved.args, true, profile.tools);
-      trace.push({ name: data.approved.name, ok: done.ok, detail: done.detail.slice(0, 400) });
-      messages.push({
-        role: "assistant",
-        content: null,
-        tool_calls: [{ id: "approved", type: "function", function: { name: data.approved.name, arguments: JSON.stringify(data.approved.args) } }],
-      });
-      messages.push({ role: "tool", tool_call_id: "approved", content: done.detail.slice(0, 8000) });
-    }
-
-    for (let i = 0; i < 6; i++) {
-      const chat = await chatWithTools(resolveEndpoint(data.modelId), messages, tools);
-      if (!chat.ok) return { ok: false, error: chat.error };
-
-      let calls = chat.toolCalls ?? [];
-      if (!calls.length && chat.text) {
-        const fb = parseFallback(chat.text);
-        if (fb?.final) return { ok: true, text: fb.final, trace };
-        if (fb?.tool) calls = [{ id: `fb_${i}`, name: fb.tool, arguments: JSON.stringify(fb.args ?? {}) }];
-      }
-      if (!calls.length) return { ok: true, text: chat.text || "Done.", trace };
-
-      messages.push({
-        role: "assistant",
-        content: chat.text || null,
-        tool_calls: calls.map((c) => ({
-          id: c.id,
-          type: "function",
-          function: { name: c.name, arguments: c.arguments },
-        })),
-      });
-
-      for (const call of calls) {
-        const args = parseArgs(call.arguments);
-        const result = await execTool(data.folder, mode, call.name, args, approved, profile.tools);
-        if (result.pending) return { ok: true, text: chat.text || `Need approval to ${call.name}.`, trace, pending: result.pending };
-        trace.push({ name: call.name, ok: result.ok, detail: result.detail.slice(0, 400) });
-        messages.push({ role: "tool", tool_call_id: call.id, content: result.detail.slice(0, 8000) });
-      }
-      approved = false;
-    }
-    return { ok: true, text: "Stopped after 6 tool rounds. Ask me to continue.", trace };
+    return runLoop({
+      folder: data.folder,
+      mode,
+      modelId: data.modelId,
+      system,
+      prompt: data.prompt,
+      tools,
+      allowed: profile.tools,
+      approved: data.approved,
+      depth: 0,
+      rounds: 12,
+    });
   });
