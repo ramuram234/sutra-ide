@@ -8,16 +8,16 @@ Repository: https://github.com/ramuram234/sutra-ide
 
 ## 1. What Sutra is
 
-Sutra is a spec-driven AI software IDE (same idea as Kiro):
+Sutra is an **agent runtime** with an IDE shell (same idea as Kiro/Copilot), not an LLM that writes Java:
 
-1. You describe a product in chat (**Spec** or **Vibe**).
-2. The model writes `requirements.md` (EARS), `design.md`, `tasks.md`.
-3. You approve each file.
-4. **Run tasks** generates source for the stack you named (React, Python, Java, Go, C#, PHP, Rust, Ruby, Kotlin).
-5. Explorer (left) / editor (center) / chat (right) / terminal (bottom).
-6. The agent may run shell only after **Allow / Allow this workspace / Deny**.
+1. You open a folder. Discovery reads manifests (`package.json`, `pom.xml`, `go.mod`, …) — it does not assume a stack.
+2. You ask in chat. Context engine retrieves a few relevant files, not the repo.
+3. The agent writes its own todos, uses tools (`read`/`edit`/`bash`/`git_diff`), then you approve risky shell.
+4. Optional spec mode writes `.ai/specs/`. Steering lives in `.ai/steering/` and `SUTRA.md`.
 
-It is **not** tied to a government product. Nidhi and Budget are separate apps; they connect later as MCP servers.
+Architecture (six layers, no Spring in core): [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+Nidhi and Budget are MCP/persona plugins later — not baked into the runtime.
 
 ### Layout (Kiro / VS Code)
 

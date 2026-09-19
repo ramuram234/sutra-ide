@@ -1,13 +1,14 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { canAutoShell, canAutoWrite, type AgentMode } from "./agent-modes";
 import { findAgent, loadProjectAgents, type AgentTool } from "./agents";
+import { observeWorkspace } from "./context-engine";
 import { DEFAULT_PLATFORM } from "./platform-config";
 import { chatWithTools, type ToolDef } from "./model-router";
 import { evaluate } from "./permissions";
+import { loadSteering } from "./steering";
 import {
   execInFolder,
+  gitSnapshot,
   listFolder,
   readWorkspaceFile,
   writeWorkspaceFile,
@@ -98,6 +99,22 @@ const TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "git_status",
+      description: "Working tree status (porcelain).",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_diff",
+      description: "Unstaged unified diff.",
+      parameters: { type: "object", properties: { path: { type: "string" } } },
+    },
+  },
 ];
 
 export type AgentTrace = { name: string; ok: boolean; detail: string };
@@ -121,19 +138,6 @@ function parseFallback(text: string): { tool?: string; args?: Record<string, str
   } catch {
     return null;
   }
-}
-
-async function memory(folder: string) {
-  const names = ["SUTRA.md", "AGENTS.md", "CLAUDE.md"];
-  const bits: string[] = [];
-  for (const name of names) {
-    try {
-      bits.push(`# ${name}\n${(await readFile(path.join(folder, name), "utf8")).slice(0, 6000)}`);
-    } catch {
-      /* missing is fine */
-    }
-  }
-  return bits.join("\n\n");
 }
 
 async function execTool(
@@ -226,6 +230,16 @@ async function execTool(
     });
     if (!inner.ok) return { ok: false, detail: inner.error };
     return { ok: true, detail: `${inner.text}\n${inner.trace.map((t) => `${t.name}: ${t.detail}`).join("\n")}`.slice(0, 8000) };
+  }
+  if (name === "git_status") {
+    const snap = await gitSnapshot({ data: { folder } });
+    if (!snap.repo) return { ok: true, detail: "Not a git repository." };
+    const lines = snap.changes.map((c) => `${c.status} ${c.path}`).join("\n") || "(clean)";
+    return { ok: true, detail: `${snap.branch}\n${lines}` };
+  }
+  if (name === "git_diff") {
+    const r = await execInFolder(folder, args.path ? `git diff -- ${args.path}` : "git diff");
+    return { ok: r.ok, detail: `${r.stdout}\n${r.stderr}`.trim().slice(0, 8000) || "(no diff)" };
   }
   return { ok: false, detail: `Unknown tool ${name}` };
 }
@@ -325,17 +339,19 @@ export const runAgent = createServerFn({ method: "POST" })
     const profile = findAgent(data.agentId, extra);
     const tools = TOOLS.filter((t) => profile.tools.includes(t.function.name as AgentTool));
     const mode = profile.mode ?? data.mode;
-    const mem = await memory(data.folder);
-    let index = "";
+    const steering = await loadSteering(data.folder);
+    let observed = "open a folder first";
+    let excerpts = "";
     try {
-      const listed = await listFolder({ data: { folder: data.folder } });
-      index = listed.entries
-        .filter((e) => !e.dir)
-        .slice(0, 120)
-        .map((e) => e.path)
-        .join("\n");
-    } catch {
-      index = "(open a folder first)";
+      const obs = await observeWorkspace(data.folder, data.prompt);
+      observed = obs.summary;
+      excerpts = obs.retrieved
+        .slice(0, 6)
+        .map((r) => `### ${r.path}\n${r.excerpt}`)
+        .join("\n\n")
+        .slice(0, 10_000);
+    } catch (err) {
+      observed = err instanceof Error ? err.message : "observe failed";
     }
     const historyText = data.history
       .filter((m) => m.role !== "system")
@@ -344,23 +360,25 @@ export const runAgent = createServerFn({ method: "POST" })
       .join("\n");
     const system = `${profile.system}
 
-You are a coding agent in a separate context from the IDE. The host does not know this product. There is no built-in unpaid/leave/budget recipe.
+You are the agent runtime, not the IDE. Stack is discovered from the workspace — never assume Java/Spring/AWS/Nidhi.
 
-For every request:
-1. glob / grep / read until you know what already exists
-2. todo — write YOUR task list for this request
-3. edit/write to complete those todos (spawn a worker only for a large independent slice)
-4. Prefer extending the stack you found. Do not invent a parallel app.
+Loop: observe (done below) → todo (your list) → tools → inspect → git_diff before you claim done.
+Do not dump or invent a parallel app. Retrieve more with grep/read if the excerpts are wrong.
 
-File index (names only — not schema. Open files to learn columns/APIs):
-${index || "(empty)"}
+## Observe
+${observed}
 
-Chat history:
+## Retrieved excerpts (not the whole repo)
+${excerpts || "(none — grep)"}
+
+## Steering
+${steering || "(none)"}
+
+## Chat history
 ${historyText || "(none)"}
 
 Workspace: ${data.folder}
-Permission mode: ${mode}. ${mode === "plan" ? "Read only — do not edit." : ""}
-${mem}`;
+Permission: ${mode}. ${mode === "plan" ? "Read only." : ""}`;
 
     return runLoop({
       folder: data.folder,

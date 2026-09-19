@@ -1,0 +1,1134 @@
+Yes. If your goal is to build your own internal Kiro/Copilot-style AI development platform, it is absolutely feasible. The important point is that you are not really building an LLM-powered IDE. You are building an agent runtime + code intelligence system + IDE integration + secure execution environment.
+
+AWS describes Kiro as an agentic IDE that converts prompts into requirements, designs, tasks, code and tests, with steering files, hooks and MCP integrations.  GitHub's current Copilot architecture similarly has agents that can modify files, execute commands, work asynchronously in sandboxes, create branches and PRs, and integrate MCP/tools. 
+
+For your environment, I would build something like this:
+
+1. What you actually need to build
+
+Think of the system as 6 layers:
+
+YOUR AI DEVELOPMENT PLATFORM
+┌───────────────────────────────────────────────────────────────┐
+│                         Developer UI                         │
+│                                                               │
+│  VS Code Extension │ Web UI │ CLI │ IntelliJ Plugin          │
+└──────────────────────────────┬────────────────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│                       AGENT ORCHESTRATOR                      │
+│                                                               │
+│  Planner → Context → Agent → Tools → Validator → Reviewer    │
+└──────────────────────────────┬────────────────────────────────┘
+                               │
+             ┌─────────────────┼──────────────────┐
+             ▼                 ▼                  ▼
+       Code Intelligence   Tool/MCP Layer    Knowledge Layer
+             │                 │                  │
+       AST / Embeddings       GitLab          Architecture
+       Symbol Index            Jira            Standards
+       Dependency Graph        DB              APIs
+       Search                 AWS             Documentation
+             │                 │                  │
+             └─────────────────┼──────────────────┘
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    SECURE EXECUTION                           │
+│                                                               │
+│  Sandbox → terminal → build → test → lint → security scan    │
+└───────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    ENTERPRISE SYSTEMS                         │
+│                                                               │
+│ GitLab │ AWS │ Jira │ SonarQube │ Nexus │ PostgreSQL │ etc.  │
+└───────────────────────────────────────────────────────────────┘
+
+
+---
+
+2. Don't start by building your own IDE
+
+This is the biggest architectural decision.
+
+You should not initially build a VS Code replacement.
+
+Instead:
+
+VS Code
+                   │
+                   │ Extension
+                   ▼
+        ┌──────────────────────┐
+        │ Your AI Agent Client │
+        └──────────┬───────────┘
+                   │ HTTPS/WebSocket
+                   ▼
+        ┌──────────────────────┐
+        │    Agent Gateway     │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │   Agent Runtime      │
+        └──────────────────────┘
+
+Later you can build your own Code-OSS-based IDE.
+
+Kiro itself is based on Code OSS and supports VS Code settings/extensions. 
+
+So your V1 should be a VS Code extension + backend agent.
+
+
+---
+
+3. The most important component: Agent Runtime
+
+This is the heart of the platform.
+
+For example, developer asks:
+
+> Add employee leave cancellation API.
+
+
+
+Your system shouldn't immediately ask the LLM to write Java.
+
+Instead:
+
+User request
+     │
+     ▼
+Intent Analyzer
+     │
+     ▼
+Repository Understanding
+     │
+     ▼
+Planner
+     │
+     ▼
+Implementation Plan
+     │
+     ▼
+Developer Approval
+     │
+     ▼
+Coding Agent
+     │
+     ├── read files
+     ├── search code
+     ├── modify files
+     ├── create files
+     ├── run Maven
+     ├── run tests
+     ├── inspect errors
+     └── fix errors
+     │
+     ▼
+Code Reviewer
+     │
+     ▼
+Security / Quality Validation
+     │
+     ▼
+Git Diff
+     │
+     ▼
+Developer Approval
+     │
+     ▼
+Commit / MR
+
+This is much closer to Kiro/Copilot than simply:
+
+Prompt → LLM → Code
+
+
+---
+
+4. Your Agent needs tools
+
+The LLM itself shouldn't have direct uncontrolled access to everything.
+
+Give it tools.
+
+For example:
+
+File Tools
+
+read_file()
+write_file()
+delete_file()
+list_directory()
+search_code()
+find_symbol()
+find_references()
+
+Then:
+
+Execution Tools
+
+run_command()
+run_maven()
+run_gradle()
+run_npm()
+run_tests()
+run_linter()
+run_sonar()
+
+Then:
+
+Git Tools
+
+git_status()
+git_diff()
+git_log()
+git_branch()
+git_commit()
+git_push()
+create_merge_request()
+
+And enterprise tools:
+
+AWS Tools
+    │
+    ├── CloudWatch
+    ├── ECS
+    ├── ECR
+    ├── RDS
+    └── Terraform
+
+Enterprise Tools
+    │
+    ├── GitLab
+    ├── Jira
+    ├── SonarQube
+    ├── Nexus
+    ├── PostgreSQL
+    └── Confluence
+
+MCP is useful here because it gives you a standardized tool interface. Kiro itself supports MCP for connecting agents to documentation, databases, APIs and enterprise resources. 
+
+
+---
+
+5. Your "Kiro Spec" equivalent
+
+This is where I think your platform can become significantly more useful for your organization.
+
+Suppose someone says:
+
+> Build employee loan management.
+
+
+
+Your agent creates:
+
+.ai/
+   specs/
+      employee-loan/
+          requirements.md
+          architecture.md
+          api.md
+          database.md
+          security.md
+          tasks.md
+
+For example:
+
+requirements.md
+
+1. Employee can apply for loan
+2. Employee can view eligibility
+3. Employee can cancel application
+4. Approver can approve/reject
+5. Employee receives notification
+
+Then:
+
+architecture.md
+
+Frontend
+    ↓
+Leave/LMS API
+    ↓
+Loan Service
+    ↓
+PostgreSQL
+    ↓
+Notification Service
+
+Then:
+
+tasks.md
+
+[ ] Create database tables
+[ ] Create entity
+[ ] Create repository
+[ ] Create service
+[ ] Create REST API
+[ ] Add authorization
+[ ] Add unit tests
+[ ] Add integration tests
+[ ] Update OpenAPI
+[ ] Update documentation
+
+This is essentially the spec-driven development model Kiro emphasizes. 
+
+
+---
+
+6. Codebase understanding is critical
+
+This is actually harder than the LLM.
+
+Imagine your repository:
+
+nidhi/
+ ├── employee-service/
+ ├── payroll-service/
+ ├── leave-service/
+ ├── tax-service/
+ ├── notification-service/
+ ├── common/
+ └── infrastructure/
+
+The agent needs to understand:
+
+Employee
+   │
+   ├── Payroll
+   │
+   ├── Leave
+   │
+   ├── Tax
+   │
+   └── APGLI
+
+You need a Code Knowledge Engine.
+
+I would use:
+
+Layer 1 — lexical search
+
+ripgrep
+Zoekt
+OpenSearch
+
+Layer 2 — AST
+
+For Java:
+
+JavaParser
+Eclipse JDT
+Tree-sitter
+
+You extract:
+
+Classes
+Methods
+Interfaces
+Imports
+Annotations
+REST endpoints
+SQL
+Entities
+Repositories
+Dependencies
+
+Layer 3 — embeddings
+
+Create embeddings for:
+
+class
+method
+API
+documentation
+database schema
+configuration
+README
+architecture
+
+Layer 4 — dependency graph
+
+Something like:
+
+LeaveController
+      │
+      ▼
+LeaveService
+      │
+      ▼
+LeaveRepository
+      │
+      ▼
+leave_request
+
+This lets the agent answer:
+
+> Where should I modify the system to implement leave cancellation?
+
+
+
+instead of blindly searching the entire repository.
+
+
+---
+
+7. Don't send the whole repository to the LLM
+
+This is a common mistake.
+
+You need a context pipeline:
+
+User request
+      │
+      ▼
+Intent
+      │
+      ▼
+Relevant services
+      │
+      ▼
+Relevant files
+      │
+      ▼
+Relevant classes
+      │
+      ▼
+Relevant methods
+      │
+      ▼
+Relevant tests
+      │
+      ▼
+Relevant documentation
+      │
+      ▼
+LLM context
+
+For example:
+
+Question:
+"Add leave cancellation"
+
+Retrieved context:
+
+LeaveController.java
+LeaveService.java
+LeaveRepository.java
+LeaveRequest.java
+LeaveServiceTest.java
+leave_request.sql
+API specification
+Security rules
+
+Not:
+
+5000 files
+
+
+---
+
+8. You should have multiple specialized agents
+
+Don't create one giant agent.
+
+I'd use:
+
+Master Agent
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               ▼               ▼
+       Planner          Coder          Reviewer
+          │               │               │
+          ▼               ▼               ▼
+     Architecture      Java Agent      Security
+     Agent             SQL Agent       Agent
+                       Test Agent      QA Agent
+                       DevOps Agent
+
+For example:
+
+Planner Agent
+
+Input:
+"Add APGLI maturity calculation"
+
+Output:
+
+1. Identify existing APGLI module
+2. Find calculation logic
+3. Identify DB tables
+4. Identify API
+5. Create implementation plan
+
+Coding Agent
+
+Actually changes files.
+
+Test Agent
+
+Creates:
+
+unit tests
+integration tests
+edge cases
+
+Security Agent
+
+Checks:
+
+authentication
+authorization
+SQL injection
+secrets
+IAM
+OWASP
+dependency vulnerabilities
+
+Reviewer Agent
+
+Reviews:
+
+git diff
+architecture
+coding standards
+tests
+performance
+security
+
+
+---
+
+9. Add your "Steering" equivalent
+
+This could be extremely valuable for your organization.
+
+Create:
+
+.ai/steering/
+
+architecture.md
+java.md
+spring-boot.md
+database.md
+security.md
+aws.md
+api.md
+testing.md
+git.md
+
+For example:
+
+java.md
+
+All backend services must:
+
+- Use Java 21
+- Use Spring Boot
+- Use constructor injection
+- Use DTOs
+- Use Bean Validation
+- Never expose JPA entities through REST
+- Use centralized exception handling
+
+And:
+
+aws.md
+
+- Use IAM roles
+- Never create access keys
+- Private subnets for databases
+- Secrets through Secrets Manager
+- Encryption using KMS
+
+Then every agent receives these rules.
+
+Kiro's steering files serve a similar purpose: persistent project/team instructions that guide agent behavior. 
+
+
+---
+
+10. Add Hooks
+
+This is another powerful feature.
+
+For example:
+
+Developer saves Java file
+             │
+             ▼
+          Hook
+             │
+             ▼
+     Run AI validation
+             │
+       ┌─────┴─────┐
+       ▼           ▼
+     Check        Test
+     standards
+
+Or:
+
+API changed
+    │
+    ▼
+Agent Hook
+    │
+    ├── update OpenAPI
+    ├── update API documentation
+    └── generate tests
+
+Or:
+
+Database schema changed
+       │
+       ▼
+Agent
+       │
+       ├── update entity
+       ├── update repository
+       └── update documentation
+
+Kiro explicitly supports event-driven agent hooks for actions such as file save/create/delete. 
+
+
+---
+
+11. Secure execution environment
+
+This is extremely important.
+
+Never allow:
+
+LLM
+ ↓
+production server
+
+Instead:
+
+Agent
+                      │
+                      ▼
+              Execution Gateway
+                      │
+                      ▼
+             ┌─────────────────┐
+             │   Sandbox       │
+             │                 │
+             │ Docker          │
+             │ CPU limit       │
+             │ Memory limit    │
+             │ Network policy  │
+             │ filesystem      │
+             └─────────────────┘
+
+For your AWS environment:
+
+Agent Platform
+                          │
+                          ▼
+                  ECS/Fargate
+                          │
+                          ▼
+                  Agent Sandbox
+                          │
+                ┌─────────┴──────────┐
+                ▼                    ▼
+             GitLab              AWS APIs
+          restricted token       IAM Role
+
+For higher isolation:
+
+ECS
+   +
+Firecracker
+   +
+isolated VPC
+
+or Kubernetes:
+
+Agent
+  ↓
+Kubernetes Job
+  ↓
+isolated namespace
+  ↓
+sandbox container
+
+
+---
+
+12. Human approval must be built into the architecture
+
+You don't want:
+
+AI
+ ↓
+git push
+ ↓
+production
+
+Instead:
+
+AI Agent
+                    │
+                    ▼
+              Proposed Changes
+                    │
+                    ▼
+                 Git Diff
+                    │
+                    ▼
+              Developer Review
+                    │
+             ┌──────┴──────┐
+             ▼             ▼
+           Reject        Approve
+                           │
+                           ▼
+                         Commit
+                           │
+                           ▼
+                      Merge Request
+
+GitHub's current agent model also uses review/approval mechanisms and ephemeral execution environments for cloud-agent work. 
+
+
+---
+
+13. Your stack
+
+Given your team's existing Spring Boot experience, I would not introduce Python everywhere.
+
+I'd use:
+
+Frontend
+──────────────
+React
+TypeScript
+
+
+IDE
+──────────────
+VS Code Extension
+TypeScript
+
+
+API Gateway
+──────────────
+Spring Boot
+
+
+Agent Orchestrator
+──────────────
+Spring Boot
+Spring AI
+
+
+Agent State
+──────────────
+PostgreSQL
+
+
+Vector Search
+──────────────
+OpenSearch
+or
+pgvector
+
+
+Code Search
+──────────────
+OpenSearch / Zoekt
+
+
+Message/Event
+──────────────
+Kafka
+
+
+LLM
+──────────────
+Amazon Bedrock
+
+
+Tools
+──────────────
+MCP
+
+
+Git
+──────────────
+GitLab
+
+
+Execution
+──────────────
+ECS / Kubernetes
+
+
+Authentication
+──────────────
+Keycloak
+
+
+Observability
+──────────────
+OpenObserve
+
+
+Security
+──────────────
+SonarQube
+Trivy
+Semgrep
+
+This fits very well with the infrastructure you already have.
+
+
+---
+
+14. Bedrock model architecture
+
+You don't necessarily need one model.
+
+I'd build a model router:
+
+Agent Router
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       Fast Model   Coding Model  Reasoning
+          │            │            │
+       simple       coding       architecture
+       tasks        tasks         planning
+
+For example:
+
+Simple:
+"Explain this method"
+
+       ↓
+
+cheap/fast model
+
+
+Complex:
+"Refactor authentication architecture"
+
+       ↓
+
+strong reasoning model
+
+That can substantially control cost.
+
+
+---
+
+15. The actual agent loop
+
+This is the core algorithm.
+
+while task_not_complete:
+
+    observe()
+
+    plan()
+
+    choose_tool()
+
+    execute_tool()
+
+    inspect_result()
+
+    validate()
+
+    if failure:
+        diagnose()
+
+        fix()
+
+    if tests_pass:
+        continue
+
+    if task_complete:
+        stop
+
+Example:
+
+User:
+"Add employee leave cancellation API"
+
+Agent:
+
+1. Search Leave module
+2. Find LeaveController
+3. Find LeaveService
+4. Find LeaveRepository
+5. Inspect DB
+6. Inspect existing APIs
+7. Create plan
+8. Modify service
+9. Modify controller
+10. Add validation
+11. Generate tests
+12. Run mvn test
+13. Test fails
+14. Read failure
+15. Fix implementation
+16. Run tests
+17. Tests pass
+18. Show diff
+
+That loop is the real product.
+
+
+---
+
+16. Your platform can go beyond Kiro
+
+This is where your previous AI Workspace / DevOps Platform idea becomes interesting.
+
+Instead of just:
+
+> AI writes code
+
+
+
+you could build:
+
+AI SOFTWARE DELIVERY PLATFORM
+
+Requirement
+     │
+     ▼
+Requirement Agent
+     │
+     ▼
+Architecture Agent
+     │
+     ▼
+UI/Wireframe Agent
+     │
+     ▼
+API Agent
+     │
+     ▼
+Coding Agents
+     │
+     ▼
+Testing Agent
+     │
+     ▼
+Security Agent
+     │
+     ▼
+DevOps Agent
+     │
+     ▼
+CI/CD
+     │
+     ▼
+Deployment
+     │
+     ▼
+Observability
+     │
+     ▼
+Production
+
+And your developer gets one interface:
+
+┌───────────────────────────────────────────────────────────┐
+│ AI Development Workspace                                 │
+├───────────────┬───────────────────────────┬───────────────┤
+│ Repository    │ AI Agent                  │ Changes       │
+│               │                           │               │
+│ employee/     │ Build leave cancellation  │ + Controller  │
+│               │                           │ + Service     │
+│ payroll/      │ ✓ Requirements            │ + Tests       │
+│               │ ✓ Design                  │               │
+│ leave/        │ ✓ Implementation          │ 12 files      │
+│               │ ✓ Tests                   │               │
+│               │                           │ [Review]      │
+└───────────────┴───────────────────────────┴───────────────┘
+
+
+---
+
+17. I would build it in 4 phases
+
+V1 — AI Coding Assistant
+
+Don't overbuild.
+
+VS Code Extension
+       ↓
+Spring Boot Agent API
+       ↓
+Bedrock
+       ↓
+Repository tools
+       ↓
+Git
+
+Features:
+
+Chat with code
+
+Explain code
+
+Generate code
+
+Modify code
+
+Search repository
+
+Run tests
+
+Show diff
+
+
+Goal: Copilot-like.
+
+
+---
+
+V2 — Agentic Developer
+
+Add:
+
+Planner
++
+Tool calling
++
+Autonomous execution
++
+Test/fix loop
++
+MCP
++
+Sandbox
+
+Now:
+
+> "Implement leave cancellation"
+
+
+
+can execute the entire workflow.
+
+Goal: Cursor/Copilot Agent-like.
+
+
+---
+
+V3 — Kiro-style engineering
+
+Add:
+
+requirements.md
+design.md
+tasks.md
+steering
+hooks
+architecture knowledge
+code graph
+persistent memory
+
+Now you have:
+
+> Spec → Design → Tasks → Code → Test → Review
+
+
+
+This is the major Kiro distinction. 
+
+
+---
+
+V4 — Enterprise AI Software Factory
+
+This is where I'd take your platform.
+
+Business Requirement
+        ↓
+     AI Analyst
+        ↓
+    AI Architect
+        ↓
+      AI UX
+        ↓
+   AI Developer
+        ↓
+      AI QA
+        ↓
+   AI Security
+        ↓
+    AI DevOps
+        ↓
+     GitLab MR
+        ↓
+       CI/CD
+
+And everything is controlled by:
+
+Keycloak
+IAM
+RBAC
+Audit Logs
+Policies
+Approvals
+Sandbox
+Cost Controls
+
+
+---
+
+The most important architectural decision
+
+Don't think:
+
+> "How do I build an AI that writes Java?"
+
+
+
+Think:
+
+> "How do I build an agent runtime that can understand a software repository, plan work, use tools, modify code, execute it safely, validate the result, and keep an auditable engineering context?"
+
+
+
+The LLM is only one component.
+
+┌─────────────┐
+                 │     LLM     │
+                 └──────┬──────┘
+                        │
+        ┌───────────────┼────────────────┐
+        ▼               ▼                ▼
+     Context          Tools            Memory
+        │               │                │
+        └───────────────┼────────────────┘
+                        ▼
+                     Agent
+                        │
+                 ┌──────┴──────┐
+                 ▼             ▼
+              Sandbox        Git
+                 │             │
+                 ▼             ▼
+              Tests          MR
+                 │             │
+                 └──────┬──────┘
+                        ▼
+                     Review
+
+That is the architecture I'd recommend for your organization, especially because you already have Spring Boot, GitLab, Keycloak, AWS, MCP, OpenObserve and Bedrock experience.
+
+If you want to actually build this, the next useful step is to design the V1 in detail—the VS Code extension, Spring Boot agent server, Bedrock model router, repository indexing, tool/MCP protocol, agent loop, sandbox, database schema, and the exact APIs between each component.
