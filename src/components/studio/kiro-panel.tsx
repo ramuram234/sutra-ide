@@ -35,7 +35,9 @@ export function KiroPanel({
             {a.name}
           </p>
         ))}
-        <p className="px-2 pt-1 text-[10px] text-subtle">You do not chat with workers. Team assigns them.</p>
+        <p className="px-2 pt-1 text-[10px] text-subtle">
+          Agents run outside the workbench (own context). Chat only gets a summary. Explorer always reads the folder first.
+        </p>
       </Section>
       <Section title="SPECS">
         {specName ? (

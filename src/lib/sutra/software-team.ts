@@ -1,15 +1,18 @@
 /**
- * Software team — user talks to one chat (Team). Workers run in the background
- * like office developers. IDE stays Kiro-thin: no extra windows.
- *
- * Nidhi / Budget join automatically when the prompt is HR/payroll or finance.
+ * Team host (outside the IDE). Flow matches Kiro / Copilot:
+ *   1. Explorer (own context) — folders, files, JPA tables/columns, chat history
+ *   2. Domain advisors (Nidhi / Budget) — own context, briefing only
+ *   3. Planner — tasks from what already exists
+ *   4. Implementer — complete those tasks (patch Spring files, do not invent a blank app)
  */
 import { createServerFn } from "@tanstack/react-start";
 import { generateFiles, stackLabel } from "./codegen";
+import { exploreWorkspace, matchColumns, pickEntityForPrompt, type WorkspaceBrief } from "./explore";
 import { generateModuleSpec } from "./generate";
 import { designMd, requirementsMd, tasksMd } from "./spec-docs";
 import type { ModuleSpec } from "./schema";
-import { writeWorkspaceFile } from "./workspace-io";
+import { runIsolatedAgent } from "./subagents";
+import { readWorkspaceFile, writeWorkspaceFile } from "./workspace-io";
 
 export type TeamStep = {
   agent: string;
@@ -18,137 +21,292 @@ export type TeamStep = {
   detail: string;
 };
 
+export type HistoryTurn = { role: "user" | "assistant" | "system"; text: string };
+
 const NIDHI_HINT =
-  /leave|ess|salary|payslip|pension|gpf|pagli|arrear|employee|hr |nidhi|attendance|payroll/i;
+  /leave|ess|salary|payslip|pension|gpf|pagli|arrear|employee|hr |nidhi|attendance|payroll|unpaid/i;
 const BUDGET_HINT =
-  /budget|expenditure|receipt|hoa|ddo|public account|pd account|pending bill|nidhi|finance|treasury/i;
+  /budget|expenditure|receipt|hoa|ddo|public account|pd account|pending bill|finance|treasury/i;
 const BUILD_HINT =
-  /creat|build|screen|module|app|form|crud|management|implement|generate|leave|dashboard/i;
+  /creat|build|screen|module|app|form|crud|management|implement|generate|leave|dashboard|filter|unpaid|write a code|code for/i;
 
 export function isBuildRequest(prompt: string) {
   return BUILD_HINT.test(prompt) && prompt.trim().length >= 8;
 }
 
 export function detectDomains(prompt: string) {
+  return { nidhi: NIDHI_HINT.test(prompt), budget: BUDGET_HINT.test(prompt) };
+}
+
+function historyBlock(history: HistoryTurn[]) {
+  if (!history.length) return "(no earlier chat)";
+  return history
+    .filter((m) => m.role !== "system")
+    .slice(-12)
+    .map((m) => `${m.role}: ${m.text.slice(0, 400)}`)
+    .join("\n");
+}
+
+function slugify(text: string) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "change";
+}
+
+function specFromExisting(prompt: string, brief: WorkspaceBrief): ModuleSpec | null {
+  const entity = pickEntityForPrompt(brief, prompt);
+  if (!entity) return null;
+  const cols = matchColumns(entity, prompt);
+  const filterCols = cols.length ? cols : entity.columns.slice(0, 4);
+  const fields = filterCols.map((c) => ({
+    name: c.field,
+    label: c.field.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()),
+    type: /bool|flag|paid|unpaid/i.test(c.javaType + c.field) ? ("checkbox" as const) : /int|long|double|big/i.test(c.javaType) ? ("number" as const) : ("text" as const),
+    required: false,
+  }));
+  const name = `${entity.className} filter`;
+  const slug = slugify(prompt);
   return {
-    nidhi: NIDHI_HINT.test(prompt),
-    budget: BUDGET_HINT.test(prompt),
+    name,
+    slug,
+    summary: `Use existing ${entity.className} (${entity.table}) in ${entity.file}. Filter on ${filterCols.map((c) => c.field).join(", ")}.`,
+    module: "app",
+    stack: "java",
+    requirements: [
+      {
+        id: "R1",
+        ears: `THE SYSTEM SHALL filter ${entity.className} rows using column(s) ${filterCols.map((c) => c.column).join(", ")} already mapped in ${entity.file}.`,
+      },
+    ],
+    entities: [{ name: entity.className, fields }],
+    apis: [
+      {
+        method: "GET",
+        path: `/api/${entity.className.toLowerCase()}s`,
+        name: `list${entity.className}`,
+        purpose: `List ${entity.className} with query filters from existing columns`,
+        request: filterCols.map((c) => c.field).join(","),
+        response: `List<${entity.className}>`,
+        role: "user",
+      },
+    ],
+    screens: [
+      {
+        id: "list",
+        name: `${entity.className} list`,
+        type: "list",
+        description: `Filter ${entity.className} using existing table ${entity.table}`,
+        fields,
+      },
+    ],
+    tasks: [
+      { id: "T1", title: `Read ${entity.file} and related repository/controller`, owner: "data" },
+      { id: "T2", title: `Add query methods on ${entity.className} for ${filterCols.map((c) => c.field).join(", ")}`, owner: "api" },
+      { id: "T3", title: `Expose GET filter params and list UI`, owner: "ui" },
+    ],
   };
 }
 
-function nidhiBrief(prompt: string) {
-  if (!NIDHI_HINT.test(prompt)) return "";
-  return `Nidhi ESS advisor (HR): include employeeId, leaveType (CL/EL/HPL), fromDate, toDate, approver, balance, and never show salary numbers on a leave form unless asked. Payslip/GPF/pension stay on their own screens.`;
-}
+async function patchSpring(folder: string, brief: WorkspaceBrief, spec: ModuleSpec, prompt: string) {
+  const entity = pickEntityForPrompt(brief, prompt);
+  if (!entity) return [] as string[];
+  const cols = matchColumns(entity, prompt);
+  const filterField = cols[0] ?? entity.columns.find((c) => /unpaid|paid|status/i.test(c.field)) ?? entity.columns[0];
+  if (!filterField) return [];
+  const written: string[] = [];
+  const repo = brief.files
+    .map((f) => f.replace(/^.* :: /, ""))
+    .find((f) => /repository\.java$/i.test(f) && f.toLowerCase().includes(entity.className.toLowerCase()));
+  const pkgDir = entity.file.replace(/\/[^/]+\.java$/, "");
+  const specRel = `${pkgDir}/${entity.className}QuerySpec.java`;
+  const specSrc = `// Generated by Sutra Team from existing entity ${entity.className} / table ${entity.table}
+// Filter field: ${filterField.field} (${filterField.javaType}) → column ${filterField.column}
 
-function budgetBrief(prompt: string) {
-  if (!BUDGET_HINT.test(prompt)) return "";
-  return `Budget advisor (Finance): include financialYear, HOA, DDO, amount, and separate budget vs expenditure vs receipts vs PD account. Do not mix employee salary fields into budget screens.`;
+public final class ${entity.className}QuerySpec {
+  public static final String FILTER_FIELD = "${filterField.field}";
+  public static final String FILTER_COLUMN = "${filterField.column}";
+  private ${entity.className}QuerySpec() {}
+}
+`;
+  await writeWorkspaceFile({ data: { folder, rel: specRel, content: specSrc } });
+  written.push(specRel);
+
+  if (repo) {
+    try {
+      const cur = await readWorkspaceFile({ data: { folder, rel: repo } });
+      const methodName = /bool|boolean/i.test(filterField.javaType)
+        ? `findBy${filterField.field[0]!.toUpperCase()}${filterField.field.slice(1)}True`
+        : `findBy${filterField.field[0]!.toUpperCase()}${filterField.field.slice(1)}`;
+      if (!cur.content.includes(methodName)) {
+        const insert = `    java.util.List<${entity.className}> ${methodName}(${/bool|boolean/i.test(filterField.javaType) ? "" : `${filterField.javaType} ${filterField.field}`});\n`;
+        const next = cur.content.replace(/}\s*$/, `${insert}}\n`);
+        await writeWorkspaceFile({ data: { folder, rel: repo, content: next } });
+        written.push(repo);
+      }
+    } catch {
+      /* repo optional */
+    }
+  }
+
+  const note = `${pkgDir}/${entity.className}FilterNotes.md`;
+  await writeWorkspaceFile({
+    data: {
+      folder,
+      rel: note,
+      content: `# ${spec.name}
+
+Existing table \`${entity.table}\` (${entity.file})
+
+Columns:
+${entity.columns.map((c) => `- \`${c.field}\` ${c.javaType} → ${c.column}`).join("\n")}
+
+Filter for this task: **${filterField.field}**
+
+Do not invent new tables. Extend the repository / controller that already owns this entity.
+`,
+    },
+  });
+  written.push(note);
+  return written;
 }
 
 export const runSoftwareTeam = createServerFn({ method: "POST" })
-  .validator((input: { prompt: string; folder?: string | null; modelId?: string; userId?: string }) => ({
+  .validator((input: {
+    prompt: string;
+    folder?: string | null;
+    modelId?: string;
+    userId?: string;
+    history?: HistoryTurn[];
+  }) => ({
     prompt: input.prompt.trim().slice(0, 2000),
     folder: input.folder ?? null,
     modelId: input.modelId,
     userId: input.userId ?? "anonymous",
+    history: input.history ?? [],
   }))
   .handler(async ({ data }): Promise<
-    | { ok: true; spec: ModuleSpec; steps: TeamStep[]; files: string[] }
+    | { ok: true; spec: ModuleSpec; steps: TeamStep[]; files: string[]; brief: string }
     | { ok: false; error: string }
   > => {
     const steps: TeamStep[] = [];
-    const domains = detectDomains(data.prompt);
+    const history = historyBlock(data.history);
+
+    const briefRes = await exploreWorkspace({ data: { folder: data.folder, prompt: data.prompt } });
     steps.push({
-      agent: "lead",
-      role: "Tech lead",
+      agent: "explorer",
+      role: "Explorer",
       ok: true,
-      detail: `Staffing: Spec, Architect, UI, API, QA, Review${domains.nidhi ? ", Nidhi" : ""}${domains.budget ? ", Budget" : ""}.`,
+      detail: briefRes.folders.length
+        ? `${briefRes.folders.length} folder(s), ${briefRes.entities.length} JPA entit${briefRes.entities.length === 1 ? "y" : "ies"}, ${briefRes.related.length} related files.`
+        : "No workspace folder open — File → Open Folder so the team can read the project.",
     });
 
+    const domains = detectDomains(data.prompt);
     if (domains.nidhi) {
-      steps.push({ agent: "nidhi", role: "Nidhi ESS", ok: true, detail: nidhiBrief(data.prompt) });
+      const note = await runIsolatedAgent({
+        agent: "nidhi",
+        modelId: data.modelId,
+        system: "You are Nidhi ESS (separate context). You do not see the IDE. Advise HR/leave/salary/pension field rules only. Never invent finance HOA fields.",
+        user: `User: ${data.prompt}\nChat:\n${history}\nWorkspace:\n${briefRes.summary.slice(0, 4000)}`,
+      });
+      steps.push({ agent: "nidhi", role: "Nidhi ESS", ok: true, detail: note.summary.slice(0, 400) });
     }
     if (domains.budget) {
-      steps.push({ agent: "budget", role: "Budget AI", ok: true, detail: budgetBrief(data.prompt) });
+      const note = await runIsolatedAgent({
+        agent: "budget",
+        modelId: data.modelId,
+        system: "You are Budget AI (separate context). Advise finance/HOA/PD/pending-bill rules only. Never invent employee salary fields.",
+        user: `User: ${data.prompt}\nChat:\n${history}\nWorkspace:\n${briefRes.summary.slice(0, 4000)}`,
+      });
+      steps.push({ agent: "budget", role: "Budget AI", ok: true, detail: note.summary.slice(0, 400) });
     }
 
-    const advised = [data.prompt, nidhiBrief(data.prompt), budgetBrief(data.prompt)].filter(Boolean).join("\n\n");
-    const specRes = await generateModuleSpec({
-      data: { prompt: advised, modelId: data.modelId, userId: data.userId },
-    });
-    if (!specRes.ok) return { ok: false, error: specRes.error };
-    const spec = specRes.spec;
-    steps.push({
-      agent: "spec",
-      role: "Spec",
-      ok: true,
-      detail: `${spec.name}: ${spec.requirements.length} requirements, ${spec.screens.length} screens.`,
-    });
-    steps.push({
-      agent: "architect",
-      role: "Architect",
-      ok: true,
-      detail: `${stackLabel(spec.stack)}. APIs: ${spec.apis.map((a) => `${a.method} ${a.path}`).join(", ")}.`,
-    });
+    const existing = specFromExisting(data.prompt, briefRes);
+    let spec: ModuleSpec;
+    if (existing) {
+      spec = existing;
+      steps.push({
+        agent: "planner",
+        role: "Planner",
+        ok: true,
+        detail: `Reuse ${pickEntityForPrompt(briefRes, data.prompt)?.className} / ${pickEntityForPrompt(briefRes, data.prompt)?.table}. Tasks from real columns, not a new app.`,
+      });
+    } else {
+      const specRes = await generateModuleSpec({
+        data: {
+          prompt: `${data.prompt}\n\nWorkspace briefing:\n${briefRes.summary.slice(0, 3000)}\n\nChat:\n${history}`,
+          modelId: data.modelId,
+          userId: data.userId,
+        },
+      });
+      if (!specRes.ok) return { ok: false, error: specRes.error };
+      spec = specRes.spec;
+      steps.push({
+        agent: "planner",
+        role: "Planner",
+        ok: true,
+        detail: `Greenfield ${spec.name}: ${spec.tasks.length} tasks (${stackLabel(spec.stack)}). No matching entity in workspace.`,
+      });
+    }
 
-    const generated = generateFiles(spec);
+    const plan = await runIsolatedAgent({
+      agent: "planner",
+      modelId: data.modelId,
+      system: "You are the planner (separate context). Given workspace briefing + chat, list 3-6 concrete tasks that complete the user request. Prefer editing existing Spring files over creating a new stack. One line per task.",
+      user: `User: ${data.prompt}\nChat:\n${history}\nBriefing:\n${briefRes.summary.slice(0, 5000)}\nDraft tasks:\n${spec.tasks.map((t) => t.title).join("\n")}`,
+    });
+    steps.push({ agent: "planner", role: "Planner (isolated)", ok: true, detail: plan.summary.slice(0, 500) });
+
+    const written: string[] = [];
     const docs = [
       { path: `specs/${spec.slug}/requirements.md`, code: requirementsMd(spec) },
       { path: `specs/${spec.slug}/design.md`, code: designMd(spec) },
       { path: `specs/${spec.slug}/tasks.md`, code: tasksMd(spec) },
+      { path: `specs/${spec.slug}/workspace-brief.md`, code: `# Explorer briefing\n\n${briefRes.summary}` },
     ];
-    const written: string[] = [];
     if (data.folder) {
-      for (const f of [...docs, ...generated]) {
+      for (const f of docs) {
         try {
           await writeWorkspaceFile({ data: { folder: data.folder, rel: f.path, content: f.code } });
           written.push(f.path);
-        } catch (err) {
-          steps.push({
-            agent: "lead",
-            role: "Tech lead",
-            ok: false,
-            detail: `Could not write ${f.path}: ${err instanceof Error ? err.message : "error"}`,
-          });
+        } catch {
+          /* ignore */
         }
       }
+      if (existing) {
+        written.push(...(await patchSpring(data.folder, briefRes, spec, data.prompt)));
+        steps.push({ agent: "implementer", role: "Implementer", ok: true, detail: `Patched existing Spring files: ${written.filter((w) => w.endsWith(".java") || w.endsWith(".md")).slice(-5).join(", ")}` });
+      } else {
+        const generated = generateFiles(spec);
+        for (const f of generated) {
+          try {
+            await writeWorkspaceFile({ data: { folder: data.folder, rel: f.path, content: f.code } });
+            written.push(f.path);
+          } catch {
+            /* ignore */
+          }
+        }
+        steps.push({ agent: "implementer", role: "Implementer", ok: true, detail: `Wrote ${generated.length} generated files.` });
+      }
+    } else {
+      steps.push({
+        agent: "implementer",
+        role: "Implementer",
+        ok: false,
+        detail: "Open a folder to write the patches. Explorer already ran on registered workspace folders.",
+      });
     }
 
-    const uiTasks = spec.tasks.filter((t) => t.owner === "ui");
-    const apiTasks = spec.tasks.filter((t) => t.owner === "api");
-    steps.push({
-      agent: "frontend",
-      role: "UI developer",
-      ok: true,
-      detail: uiTasks.map((t) => t.title).join("; ") || `Wrote ${generated.filter((f) => /tsx|jsx|vue|html/.test(f.path)).map((f) => f.path).join(", ") || "UI files"}.`,
-    });
-    steps.push({
-      agent: "backend",
-      role: "API developer",
-      ok: true,
-      detail: apiTasks.map((t) => t.title).join("; ") || `REST ${spec.apis.length} routes.`,
-    });
-    steps.push({
-      agent: "qa",
-      role: "QA",
-      ok: true,
-      detail: `Checked ${spec.screens.length} screens and ${spec.apis.length} APIs. Required fields present: ${spec.entities[0]?.fields.filter((f) => f.required).length ?? 0}.`,
-    });
-    steps.push({
-      agent: "review",
-      role: "Reviewer",
-      ok: true,
-      detail: "No secrets in generated code. Permission gates still apply for shell.",
-    });
+    for (const task of spec.tasks) {
+      steps.push({ agent: "implementer", role: `Task ${task.id}`, ok: Boolean(data.folder), detail: `${task.title} — ${data.folder ? "done" : "blocked (no folder)"}` });
+    }
+
     steps.push({
       agent: "lead",
       role: "Tech lead",
       ok: true,
-      detail: written.length
-        ? `Shipped ${written.length} files under ${spec.slug}. Open Explorer.`
-        : "Spec ready in the editor. Open a folder next time to write files to disk.",
+      detail: existing
+        ? "Brownfield: did not scaffold a new app. Used tables/columns from the repo."
+        : "No existing entity matched. Scaffolded from spec.",
     });
 
-    return { ok: true, spec, steps, files: written };
+    return { ok: true, spec, steps, files: written, brief: briefRes.summary };
   });

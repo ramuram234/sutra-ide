@@ -3,6 +3,7 @@ import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { canAutoShell, canAutoWrite, type AgentMode } from "./agent-modes";
 import { findAgent, loadProjectAgents, type AgentTool } from "./agents";
+import { scanWorkspace } from "./explore";
 import { DEFAULT_PLATFORM } from "./platform-config";
 import { chatWithTools, type ToolDef } from "./model-router";
 import { evaluate } from "./permissions";
@@ -196,6 +197,7 @@ export const runAgent = createServerFn({ method: "POST" })
     mode: AgentMode;
     modelId?: string;
     agentId?: string;
+    history?: { role: string; text: string }[];
     approved?: AgentPending;
   }) => ({
     folder: input.folder,
@@ -203,6 +205,7 @@ export const runAgent = createServerFn({ method: "POST" })
     mode: input.mode,
     modelId: input.modelId,
     agentId: input.agentId || "default",
+    history: input.history ?? [],
     approved: input.approved,
   }))
   .handler(async ({ data }): Promise<{
@@ -216,12 +219,32 @@ export const runAgent = createServerFn({ method: "POST" })
     const tools = TOOLS.filter((t) => profile.tools.includes(t.function.name as AgentTool));
     const mode = profile.mode ?? data.mode;
     const mem = await memory(data.folder);
+    let briefing = "";
+    try {
+      briefing = (await scanWorkspace(data.folder, data.prompt)).summary.slice(0, 6000);
+    } catch {
+      briefing = "(workspace scan failed)";
+    }
+    const historyText = data.history
+      .filter((m) => m.role !== "system")
+      .slice(-10)
+      .map((m) => `${m.role}: ${m.text.slice(0, 300)}`)
+      .join("\n");
     const system = `${profile.system}
-You are running as agent "${profile.name}" in a desktop IDE (same loop as Claude Code).
+You run as a separate agent context — you are not the IDE UI.
+First use the workspace briefing (folders, files, JPA entities/columns). Do not invent tables that already exist.
+Then use tools (read/grep) to confirm, then edit. Prefer extending existing Spring repositories over new stacks.
 Permission mode: ${mode}.
 Allowed tools: ${profile.tools.join(", ")}.
 ${mode === "plan" ? "Do not edit source files. Research and propose a plan." : ""}
 Workspace: ${data.folder}
+
+## Workspace briefing
+${briefing}
+
+## Chat history
+${historyText || "(none)"}
+
 ${mem}`;
 
     const messages: unknown[] = [

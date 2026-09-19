@@ -85,6 +85,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
         mode: autopilot ? "acceptEdits" : activeAgent.mode ?? (workflow === "plan" ? "plan" : mode),
         modelId: loadPlatform().defaultModelId,
         agentId,
+        history: (chat?.messages ?? []).map((m) => ({ role: m.role, text: m.text })),
         approved,
       },
     });
@@ -208,6 +209,7 @@ export function ChatThread({ folder }: { folder?: string | null }) {
           folder: folder ?? undefined,
           modelId: loadPlatform().defaultModelId,
           userId: loadUser()?.sub,
+          history: (chat?.messages ?? []).map((m) => ({ role: m.role, text: m.text })),
         },
       });
       setBusy(false);
