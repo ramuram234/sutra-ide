@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: npm ci
+      - run: npm install
       - run: npm run build
       - run: npx electron-builder ${{ matrix.flag }} --publish never
       - uses: actions/upload-artifact@v4
