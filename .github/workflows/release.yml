@@ -66,8 +66,8 @@ jobs:
 
   intellij:
     needs: test
+    if: false
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

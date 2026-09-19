@@ -4,7 +4,6 @@ copyright: Sutra
 asar: false
 directories:
   output: release
-  buildResources: desktop/icons
 files:
   - desktop/**
   - package.json
@@ -35,6 +34,7 @@ nsis:
   createDesktopShortcut: true
   shortcutName: Sutra
 mac:
+  identity: null
   target:
     - dmg
     - zip

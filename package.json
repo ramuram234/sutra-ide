@@ -1,5 +1,8 @@
 {
   "name": "sutra-ide",
+  "version": "0.1.0",
+  "description": "Sutra AI software IDE for Windows and macOS",
+  "author": "Sutra",
   "private": true,
   "main": "desktop/main.mjs",
   "sideEffects": false,

@@ -20,7 +20,7 @@
  * `process.env`, which is why the merge has to happen before Vite starts.
  */
 import { spawn } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,14 +104,34 @@ export function isMainModule(moduleUrl) {
   }
 }
 
+function resolveCommand(command, root) {
+  const bin = join(root, "node_modules", ".bin");
+  const win = process.platform === "win32";
+  const names = win ? [`${command}.cmd`, `${command}.exe`, command] : [command];
+  for (const name of names) {
+    const full = join(bin, name);
+    if (existsSync(full)) return full;
+  }
+  return command;
+}
+
 function main(argv) {
   const [command, ...args] = argv;
   if (!command) {
     console.error("usage: node scripts/with-app-env.mjs <command> [args…]");
     process.exit(2);
   }
-  const env = mergeAppEnv(readAppEnv(projectRoot()), process.env);
-  const child = spawn(command, args, { stdio: "inherit", env });
+  const root = projectRoot();
+  const env = mergeAppEnv(readAppEnv(root), process.env);
+  const resolved = resolveCommand(command, root);
+  const useCmd = process.platform === "win32" && /\.(cmd|bat)$/i.test(resolved);
+  const child = useCmd
+    ? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", resolved, ...args], {
+        stdio: "inherit",
+        env,
+        windowsHide: true,
+      })
+    : spawn(resolved, args, { stdio: "inherit", env });
   // The dev server is long-running and is stopped by signalling this wrapper.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => child.kill(signal));
