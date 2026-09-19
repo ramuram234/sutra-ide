@@ -12,7 +12,10 @@ export type IdeAction =
   | "showKeybindings"
   | "quickOpen"
   | "save"
-  | "find";
+  | "find"
+  | "showSettings"
+  | "findInFiles"
+  | "toggleFullscreen";
 
 export type Keybinding = { key: string; command: IdeAction };
 
@@ -26,6 +29,9 @@ export const ACTION_META: {
   { id: "showShortcuts", label: "Keyboard shortcuts cheatsheet", category: "General" },
   { id: "save", label: "Save", category: "Edit" },
   { id: "find", label: "Find", category: "Edit" },
+  { id: "findInFiles", label: "Find in Files", category: "Edit" },
+  { id: "showSettings", label: "Show Settings", category: "General" },
+  { id: "toggleFullscreen", label: "Toggle Full Screen", category: "View" },
   { id: "newChat", label: "New chat", category: "AI" },
   { id: "quickOpen", label: "Go to File", category: "General" },
   { id: "closeEditor", label: "Close editor tab", category: "General" },
@@ -66,6 +72,15 @@ export const DEFAULT_BINDINGS: Keybinding[] = [
   { key: "cmd+s", command: "save" },
   { key: "ctrl+f", command: "find" },
   { key: "cmd+f", command: "find" },
+  { key: "ctrl+shift+f", command: "findInFiles" },
+  { key: "cmd+shift+f", command: "findInFiles" },
+  { key: "ctrl+,", command: "showSettings" },
+  { key: "cmd+,", command: "showSettings" },
+  { key: "alt+,", command: "showSettings" },
+  { key: "f11", command: "toggleFullscreen" },
+  { key: "ctrl+shift+l", command: "toggleChat" },
+  { key: "cmd+shift+l", command: "toggleChat" },
+  { key: "alt+l", command: "toggleChat" },
 ];
 
 const KEY = "sutra.keybindings.v1";

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
 type MenuItem = { label: string; shortcut?: string; onSelect?: () => void; sep?: boolean };
@@ -22,10 +22,8 @@ export function MenuBar({
   }, []);
 
   return (
-    <header ref={root} className="flex h-9 items-center gap-1 border-b border-border bg-surface px-2">
-      <Link to="/" className="px-2 font-display text-sm tracking-tight">
-        Sutra
-      </Link>
+    <header ref={root} className="flex h-8 items-center gap-0.5 border-b border-border bg-[var(--color-activity)] px-1">
+      <span className="w-2" />
       {menus.map((m) => (
         <div key={m.id} className="relative">
           <button

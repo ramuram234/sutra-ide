@@ -16,6 +16,8 @@ import type { SpecFile, StudioStage } from "@/lib/sutra/schema";
 import { Button } from "@/components/ui/button";
 import { BrowserPreview } from "@/components/studio/browser-preview";
 import { bootTerminal, TerminalPane } from "@/components/studio/terminal-pane";
+import { ActivityBar } from "@/components/studio/activity-bar";
+import { WelcomePane } from "@/components/studio/welcome-pane";
 import { ChatSidebar } from "@/components/studio/chat-sidebar";
 import { ChatThread } from "@/components/studio/chat-thread";
 import { MenuBar } from "@/components/studio/menu-bar";
@@ -57,7 +59,7 @@ export function StudioApp() {
   const [codeTab, setCodeTab] = useState<"react" | "api">("react");
   const [showExplorer, setShowExplorer] = useState(true);
   const [showChat, setShowChat] = useState(true);
-  const [showTerm, setShowTerm] = useState(false);
+  const [showTerm, setShowTerm] = useState(true);
   const [showKeys, setShowKeys] = useState(false);
   const [palette, setPalette] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -125,6 +127,14 @@ export function StudioApp() {
         window.setTimeout(() => setSaved(false), 1200);
       },
       find: () => setFind(""),
+      findInFiles: () => setPalette(true),
+      showSettings: () => {
+        window.location.href = "/settings";
+      },
+      toggleFullscreen: () => {
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else void document.documentElement.requestFullscreen();
+      },
     },
     userKeys,
   );
@@ -210,22 +220,48 @@ export function StudioApp() {
   ];
 
   return (
-    <div className="flex min-h-dvh flex-col bg-bg text-fg">
+    <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
       <MenuBar menus={menus} />
-      <div
-        className={cn(
-          "grid min-h-0 flex-1",
-          showExplorer && showChat && "lg:grid-cols-[16rem_1fr_22rem]",
-          showExplorer && !showChat && "lg:grid-cols-[16rem_1fr]",
-          !showExplorer && showChat && "lg:grid-cols-[1fr_22rem]",
-        )}
-      >
+      <div className="flex h-9 items-center gap-2 border-b border-border bg-surface px-2">
+        <button type="button" className="px-1 text-subtle" aria-label="Back">
+          ←
+        </button>
+        <button type="button" className="px-1 text-subtle" aria-label="Forward">
+          →
+        </button>
+        <button
+          type="button"
+          onClick={() => setQuickOpen(true)}
+          className="flex h-7 flex-1 items-center justify-center gap-2 rounded-sm bg-raised text-xs text-subtle"
+        >
+          <span>⌕</span>
+          {spec ? spec.name : "Untitled (Workspace)"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowChat(true)}
+          className={cn(
+            "h-7 rounded-sm px-2 text-xs",
+            showChat ? "bg-raised text-accent" : "text-muted",
+          )}
+        >
+          Agent Focus
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1">
+        <ActivityBar
+          explorer={showExplorer}
+          chat={showChat}
+          onExplorer={() => setShowExplorer((v) => !v)}
+          onChat={() => setShowChat((v) => !v)}
+          onSearch={() => setPalette(true)}
+        />
         {showExplorer ? (
-          <aside className="flex min-h-0 flex-col border-b border-border lg:border-r lg:border-b-0">
-            <p className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-subtle">Explorer</p>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-              <p className="px-2 pb-1 font-mono text-xs text-muted">
-                {spec ? `${spec.slug} · ${stackLabel(spec.stack)}` : "workspace"}
+          <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
+            <p className="px-3 py-2 text-[11px] font-medium tracking-widest text-subtle">EXPLORER</p>
+            <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+              <p className="px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted">
+                {spec ? spec.slug : "Untitled (Workspace)"}
               </p>
               {spec ? (
                 <SpecTree
@@ -238,10 +274,6 @@ export function StudioApp() {
                 />
               ) : (
                 <>
-                  <p className="px-2 text-xs text-subtle">
-                    No folder yet. Chat: Spec or Vibe. Any language — Python, Java, Go, C#, PHP, Rust, Ruby,
-                    Kotlin, React.
-                  </p>
                   <TreeItem
                     active={file === "keybindings"}
                     locked={false}
@@ -249,16 +281,21 @@ export function StudioApp() {
                   >
                     keybindings.json
                   </TreeItem>
+                  <p className="px-2 pt-2 text-xs text-subtle">Generate a module from Agent Focus → Spec.</p>
                 </>
               )}
+            </div>
+            <div className="border-t border-border px-3 py-2">
+              <p className="text-[11px] font-medium tracking-widest text-subtle">TIMELINE</p>
+              <p className="mt-2 text-xs text-subtle">The active editor cannot provide timeline information.</p>
             </div>
           </aside>
         ) : null}
 
-        <section className="flex min-h-0 min-w-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex h-9 items-center overflow-x-auto border-b border-border">
             {openTabs.length === 0 ? (
-              <p className="px-3 text-xs text-subtle">No file open</p>
+              <p className="px-3 text-xs text-subtle">Welcome</p>
             ) : (
               openTabs.map((tab) => (
                 <div
@@ -302,46 +339,73 @@ export function StudioApp() {
                 />
               </div>
             ) : null}
-            <EditorBody
-              spec={spec}
-              file={file}
-              stage={stage}
-              files={files}
-              codeTab={codeTab}
-              setCodeTab={setCodeTab}
-              doneTasks={doneTasks}
-              runningTask={runningTask}
-              onApprove={approve}
-              onRunTasks={runTasks}
-              userKeys={userKeys}
-              setUserKeys={setUserKeys}
-              find={find ?? ""}
-            />
+            {openTabs.length === 0 && !spec ? (
+              <WelcomePane
+                onCommand={(label) => {
+                  if (label === "Open chat") setShowChat(true);
+                  if (label === "Show All Commands") setPalette(true);
+                  if (label === "Go to File") setQuickOpen(true);
+                  if (label === "Find in Files") setFind("");
+                  if (label === "Start Debugging") void runTasks();
+                  if (label === "Toggle Terminal") setShowTerm((v) => !v);
+                  if (label === "Show Settings") window.location.href = "/settings";
+                  if (label === "Toggle Full Screen") void document.documentElement.requestFullscreen?.();
+                }}
+              />
+            ) : (
+              <EditorBody
+                spec={spec}
+                file={file}
+                stage={stage}
+                files={files}
+                codeTab={codeTab}
+                setCodeTab={setCodeTab}
+                doneTasks={doneTasks}
+                runningTask={runningTask}
+                onApprove={approve}
+                onRunTasks={runTasks}
+                userKeys={userKeys}
+                setUserKeys={setUserKeys}
+                find={find ?? ""}
+              />
+            )}
           </div>
           {showTerm ? (
-            <div className="h-56 shrink-0 border-t border-border">
-              <TerminalPane compact />
+            <div className="h-40 shrink-0 border-t border-border">
+              <div className="flex h-7 items-center gap-2 border-b border-border px-2 text-xs text-subtle">
+                <span className="rounded-sm bg-raised px-2 py-0.5 text-fg">Sutra — MCP Logs</span>
+                <span className="flex-1" />
+                <button type="button" onClick={() => setShowTerm(false)} className="px-1">
+                  <X className="size-3.5" />
+                </button>
+              </div>
+              <div className="h-[calc(10rem-1.75rem)]">
+                <TerminalPane compact />
+              </div>
             </div>
           ) : null}
         </section>
 
         {showChat ? (
-          <aside className="flex min-h-0 flex-col border-t border-border lg:border-t-0 lg:border-l">
-            <p className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-subtle">Chat</p>
-            <div className="h-36 shrink-0 overflow-hidden border-b border-border">
+          <aside className="flex w-[22rem] shrink-0 flex-col border-l border-border lg:w-[24rem]">
+            <div className="flex h-9 items-center border-b border-border">
+              <p className="px-3 text-xs text-fg">New Session</p>
+              <span className="flex-1" />
+              <button type="button" onClick={() => newChatTab()} className="h-9 w-8 text-muted" aria-label="New session">
+                +
+              </button>
+            </div>
+            <div className="max-h-24 overflow-hidden border-b border-border">
               <ChatSidebar />
             </div>
             <ChatThread />
           </aside>
         ) : null}
       </div>
-      <footer className="flex h-7 items-center gap-4 overflow-x-auto border-t border-border px-3 font-mono text-xs text-subtle">
+      <footer className="flex h-6 items-center gap-4 overflow-x-auto border-t border-border bg-[var(--color-activity)] px-3 font-mono text-[11px] text-subtle">
         <span>{os === "macos" ? "macOS" : "Windows"}</span>
-        {spec ? <span>{stackLabel(spec.stack)}</span> : null}
-        {saved ? <span className="text-ok">Saved</span> : <span>Alt+K keymap</span>}
-        <span>Alt+P commands</span>
-        <span>Ctrl+` terminal</span>
-        <span>F5 run</span>
+        {spec ? <span>{stackLabel(spec.stack)}</span> : <span>Ready</span>}
+        {saved ? <span className="text-ok">Saved</span> : null}
       </footer>
       {showKeys ? <ShortcutsHelp os={os} onClose={() => setShowKeys(false)} /> : null}
       {palette ? (
@@ -361,6 +425,14 @@ export function StudioApp() {
               quickOpen: () => setQuickOpen(true),
               save: () => setSaved(true),
               find: () => setFind(""),
+              findInFiles: () => setPalette(true),
+              showSettings: () => {
+                window.location.href = "/settings";
+              },
+              toggleFullscreen: () => {
+                if (document.fullscreenElement) void document.exitFullscreen();
+                else void document.documentElement.requestFullscreen();
+              },
             };
             map[id]?.();
           }}
