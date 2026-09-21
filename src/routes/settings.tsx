@@ -250,7 +250,7 @@ function McpTab({ cfg, persist }: { cfg: PlatformConfig; persist: (c: PlatformCo
     <div className="grid gap-3">
       <p className="text-sm text-muted">
         MCP servers Sutra can attach. stdio runs on the desktop/extension host. HTTP is for remote
-        MCP (knowledge, Nidhi, Budget). Toggle enabled, then restart the desktop app.
+        MCP. Toggle enabled, then restart the desktop app.
       </p>
       {cfg.mcp.map((s, i) => (
         <article key={s.id} className="grid gap-2 rounded-md bg-raised p-4">

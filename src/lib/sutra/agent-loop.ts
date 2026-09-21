@@ -360,7 +360,7 @@ export const runAgent = createServerFn({ method: "POST" })
       .join("\n");
     const system = `${profile.system}
 
-You are the agent runtime, not the IDE. Stack is discovered from the workspace — never assume Java/Spring/AWS/Nidhi.
+You are the agent runtime, not the IDE. Stack is discovered from the workspace — never assume a language or vendor.
 
 Loop: observe (done below) → todo (your list) → tools → inspect → git_diff before you claim done.
 Do not dump or invent a parallel app. Retrieve more with grep/read if the excerpts are wrong.

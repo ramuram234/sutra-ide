@@ -17,7 +17,7 @@ Sutra is an **agent runtime** with an IDE shell (same idea as Kiro/Copilot), not
 
 Architecture (six layers, no Spring in core): [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-Nidhi and Budget are MCP/persona plugins later — not baked into the runtime.
+Domain systems (HR, finance, etc.) connect later as **MCP servers**, not as built-in IDE agents.
 
 ### Layout (Kiro / VS Code)
 
