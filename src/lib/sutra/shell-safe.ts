@@ -1,5 +1,3 @@
-import path from "node:path";
-
 export const ALLOWED_BINS = new Set([
   "node",
   "npm",
@@ -59,15 +57,19 @@ export function tokenize(input: string): string[] {
   return out;
 }
 
+function isAbs(p: string) {
+  return p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p);
+}
+
 export function contained(root: string, target: string) {
-  const r = path.resolve(root);
-  const t = path.resolve(target);
-  return t === r || t.startsWith(r + path.sep);
+  const r = root.replaceAll("\\", "/").replace(/\/+$/, "");
+  const t = target.replaceAll("\\", "/");
+  return t === r || t.startsWith(`${r}/`);
 }
 
 export function safeRel(p: string) {
   const n = p.replaceAll("\\", "/").replace(/^\.\/+/, "");
-  if (!n || n.startsWith("/") || n.includes("..") || path.isAbsolute(p)) return null;
+  if (!n || n.startsWith("/") || n.includes("..") || isAbs(p)) return null;
   if (n.includes("\0")) return null;
   return n;
 }
@@ -83,10 +85,11 @@ export function hasMetacharacters(command: string) {
 
 /** Drop `.` and empty PATH entries so Windows does not resolve a planted exe in cwd (CVE-class). */
 export function safePathEnv(raw: string | undefined) {
+  const delim = (raw ?? "").includes(";") ? ";" : ":";
   return (raw ?? "")
-    .split(path.delimiter)
+    .split(delim)
     .filter((p) => p && p !== "." && p !== "./")
-    .join(path.delimiter);
+    .join(delim);
 }
 
 export function npmSubcommandOk(cmd: string | undefined) {

@@ -142,7 +142,21 @@ function authPopupPlugin(): Plugin {
   };
 }
 
-// `0.0.0.0:8080` is the live-preview contract — don't change host/port.
+function stubServerOnlyOnClient(): Plugin {
+  return {
+    name: "sutra-stub-server-only-on-client",
+    enforce: "pre",
+    resolveId(id, _importer, opts) {
+      if (opts?.ssr) return null;
+      const bare = id.split("?")[0] ?? id;
+      if (/\.server(\.(t|j)sx?)?$/.test(bare)) return "\0sutra-server-only-stub";
+    },
+    load(id) {
+      if (id !== "\0sutra-server-only-stub") return null;
+      return "export async function nodeHost() { throw new Error('server-only'); }\n";
+    },
+  };
+}
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
 export default defineConfig(({ command, isPreview }) => ({
@@ -162,6 +176,7 @@ export default defineConfig(({ command, isPreview }) => ({
   },
   plugins: [
     pgliteBootstrapPlugin(),
+    stubServerOnlyOnClient(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
     authPopupPlugin(),
     // Dev-only /__app-env, read by scripts/check-auth-invariant.mjs.

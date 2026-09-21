@@ -1,45 +1,42 @@
-import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, writeFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
 import { createServerFn } from "@tanstack/react-start";
 import { contained, isProtectedRel, safePathEnv, safeRel, tokenize, hasMetacharacters, ALLOWED_BINS } from "./shell-safe";
 
-const execFileAsync = promisify(execFile);
 const SKIP = new Set(["node_modules", ".git", "dist", "release", ".vercel"]);
 
 export type DirEntry = { path: string; name: string; dir: boolean };
 export type GitChange = { path: string; status: string; staged: boolean };
 export type GitSnapshot = { repo: boolean; branch: string; changes: GitChange[]; ahead: string };
 
-function defaultRoot() {
+async function nodeHost() {
+  const m = await import("./node-host.server");
+  return m.nodeHost();
+}
+
+function defaultRoot(os: { homedir: () => string }, path: typeof import("node:path")) {
   return (
     process.env.SUTRA_WORKSPACE?.trim() ||
-    path.join(process.env.USERPROFILE || process.env.HOME || homedir(), "Sutra", "workspace")
+    path.join(process.env.USERPROFILE || process.env.HOME || os.homedir(), "Sutra", "workspace")
   );
 }
 
-function foldersFile() {
-  return path.join(homedir(), ".sutra", "folders.json");
-}
-
-async function loadFolders(): Promise<string[]> {
+async function loadFolders(host: Awaited<ReturnType<typeof nodeHost>>): Promise<string[]> {
   try {
-    const raw = JSON.parse(await readFile(foldersFile(), "utf8")) as { folders?: string[] };
-    return (raw.folders ?? []).map((f) => path.resolve(f));
+    const file = host.path.join(host.os.homedir(), ".sutra", "folders.json");
+    const raw = JSON.parse(await host.fs.readFile(file, "utf8")) as { folders?: string[] };
+    return (raw.folders ?? []).map((f) => host.path.resolve(f));
   } catch {
     return [];
   }
 }
 
-async function saveFolders(folders: string[]) {
-  await mkdir(path.dirname(foldersFile()), { recursive: true });
-  await writeFile(foldersFile(), JSON.stringify({ folders }, null, 2));
+async function saveFolders(host: Awaited<ReturnType<typeof nodeHost>>, folders: string[]) {
+  const file = host.path.join(host.os.homedir(), ".sutra", "folders.json");
+  await host.fs.mkdir(host.path.dirname(file), { recursive: true });
+  await host.fs.writeFile(file, JSON.stringify({ folders }, null, 2));
 }
 
-function underHome(abs: string) {
-  return contained(homedir(), abs);
+function underHome(home: string, abs: string) {
+  return contained(home, abs);
 }
 
 function blocked(abs: string) {
@@ -48,9 +45,11 @@ function blocked(abs: string) {
 }
 
 async function assertFolder(folder: string) {
-  const abs = path.resolve(folder);
-  if (blocked(abs) || !underHome(abs)) throw new Error("Folder is outside your home directory.");
-  const allowed = [path.resolve(defaultRoot()), ...(await loadFolders())];
+  const host = await nodeHost();
+  const abs = host.path.resolve(folder);
+  const home = host.os.homedir();
+  if (blocked(abs) || !underHome(home, abs)) throw new Error("Folder is outside your home directory.");
+  const allowed = [host.path.resolve(defaultRoot(host.os, host.path)), ...(await loadFolders(host))];
   if (!allowed.some((root) => abs === root || contained(root, abs) || contained(abs, root))) {
     throw new Error("Folder is not in the workspace. Use File → Open Folder first.");
   }
@@ -59,31 +58,33 @@ async function assertFolder(folder: string) {
 
 async function walk(dir: string, root: string, out: DirEntry[], depth: number) {
   if (out.length > 400 || depth > 6) return;
+  const host = await nodeHost();
   let names: string[] = [];
   try {
-    names = await readdir(dir);
+    names = await host.fs.readdir(dir);
   } catch {
     return;
   }
   for (const name of names) {
     if (SKIP.has(name) || name.startsWith(".")) continue;
-    const full = path.join(dir, name);
+    const full = host.path.join(dir, name);
     let st;
     try {
-      st = await stat(full);
+      st = await host.fs.stat(full);
     } catch {
       continue;
     }
-    const rel = path.relative(root, full).replaceAll("\\", "/");
+    const rel = host.path.relative(root, full).replaceAll("\\", "/");
     out.push({ path: rel, name, dir: st.isDirectory() });
     if (st.isDirectory()) await walk(full, root, out, depth + 1);
   }
 }
 
 export const workspaceInfo = createServerFn({ method: "GET" }).handler(async () => {
-  const home = defaultRoot();
-  await mkdir(home, { recursive: true });
-  const folders = await loadFolders();
+  const host = await nodeHost();
+  const home = defaultRoot(host.os, host.path);
+  await host.fs.mkdir(home, { recursive: true });
+  const folders = await loadFolders(host);
   return { home, folders: folders.length ? folders : [home] };
 });
 
@@ -93,19 +94,20 @@ export const registerFolder = createServerFn({ method: "POST" })
     create: Boolean(input.create),
   }))
   .handler(async ({ data }) => {
-    const abs = path.resolve(data.folder.startsWith("~") ? data.folder.replace(/^~/, homedir()) : data.folder);
-    if (!path.isAbsolute(data.folder) && !data.folder.startsWith("~")) {
-      const nested = path.resolve(defaultRoot(), data.folder);
-      if (blocked(nested) || !underHome(nested)) throw new Error("Invalid folder.");
-      if (data.create) await mkdir(nested, { recursive: true });
-      const folders = Array.from(new Set([...(await loadFolders()), nested]));
-      await saveFolders(folders);
+    const host = await nodeHost();
+    const abs = host.path.resolve(data.folder.startsWith("~") ? data.folder.replace(/^~/, host.os.homedir()) : data.folder);
+    if (!host.path.isAbsolute(data.folder) && !data.folder.startsWith("~")) {
+      const nested = host.path.resolve(defaultRoot(host.os, host.path), data.folder);
+      if (blocked(nested) || !underHome(host.os.homedir(), nested)) throw new Error("Invalid folder.");
+      if (data.create) await host.fs.mkdir(nested, { recursive: true });
+      const folders = Array.from(new Set([...(await loadFolders(host)), nested]));
+      await saveFolders(host, folders);
       return { folder: nested, folders };
     }
-    if (blocked(abs) || !underHome(abs)) throw new Error("Folder is outside your home directory.");
-    if (data.create) await mkdir(abs, { recursive: true });
-    const folders = Array.from(new Set([...(await loadFolders()), abs]));
-    await saveFolders(folders);
+    if (blocked(abs) || !underHome(host.os.homedir(), abs)) throw new Error("Folder is outside your home directory.");
+    if (data.create) await host.fs.mkdir(abs, { recursive: true });
+    const folders = Array.from(new Set([...(await loadFolders(host)), abs]));
+    await saveFolders(host, folders);
     return { folder: abs, folders };
   });
 
@@ -121,12 +123,13 @@ export const listFolder = createServerFn({ method: "POST" })
 export const readWorkspaceFile = createServerFn({ method: "POST" })
   .validator((input: { folder: string; rel: string }) => ({ folder: input.folder, rel: input.rel }))
   .handler(async ({ data }) => {
+    const host = await nodeHost();
     const root = await assertFolder(data.folder);
     const rel = safeRel(data.rel);
     if (!rel) throw new Error("Invalid path.");
-    const dest = path.join(root, rel);
+    const dest = host.path.join(root, rel);
     if (!contained(root, dest)) throw new Error("Path outside folder.");
-    const content = await readFile(dest, "utf8");
+    const content = await host.fs.readFile(dest, "utf8");
     return { path: rel, content: content.slice(0, 400_000) };
   });
 
@@ -137,13 +140,14 @@ export const writeWorkspaceFile = createServerFn({ method: "POST" })
     content: String(input.content).slice(0, 400_000),
   }))
   .handler(async ({ data }) => {
+    const host = await nodeHost();
     const root = await assertFolder(data.folder);
     const rel = safeRel(data.rel);
     if (!rel || isProtectedRel(rel)) throw new Error("Cannot write that file.");
-    const dest = path.join(root, rel);
+    const dest = host.path.join(root, rel);
     if (!contained(root, dest)) throw new Error("Path outside folder.");
-    await mkdir(path.dirname(dest), { recursive: true });
-    await writeFile(dest, data.content, "utf8");
+    await host.fs.mkdir(host.path.dirname(dest), { recursive: true });
+    await host.fs.writeFile(dest, data.content, "utf8");
     return { ok: true as const, path: rel };
   });
 
@@ -152,8 +156,9 @@ function gitBin() {
 }
 
 async function git(cwd: string, args: string[]) {
+  const host = await nodeHost();
   try {
-    const { stdout, stderr } = await execFileAsync(gitBin(), args, {
+    const { stdout, stderr } = await host.execFile(gitBin(), args, {
       cwd,
       timeout: 15_000,
       windowsHide: true,
@@ -224,6 +229,7 @@ export const gitCommitFolder = createServerFn({ method: "POST" })
   });
 
 export async function execInFolder(folder: string, command: string) {
+  const host = await nodeHost();
   const cwd = await assertFolder(folder);
   if (hasMetacharacters(command)) return { ok: false as const, stdout: "", stderr: "Pipes and chaining are blocked." };
   const tokens = tokenize(command);
@@ -232,7 +238,7 @@ export async function execInFolder(folder: string, command: string) {
   const args = tokens.slice(1);
   const exe = process.platform === "win32" && (bin === "npm" || bin === "npx") ? `${bin}.cmd` : bin === "python3" && process.platform === "win32" ? "python" : bin;
   try {
-    const r = await execFileAsync(exe, args, {
+    const r = await host.execFile(exe, args, {
       cwd,
       timeout: 20_000,
       windowsHide: true,

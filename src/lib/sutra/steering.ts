@@ -2,17 +2,16 @@
  * Steering — persistent project rules (.ai/steering, .sutra, SUTRA.md).
  * Advisory only. Hooks/permissions still enforce.
  */
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { listFolder, readWorkspaceFile } from "./workspace-io";
 
 const ROOT_NAMES = ["SUTRA.md", "AGENTS.md", "CLAUDE.md", ".ai/steering.md"];
 
 export async function loadSteering(folder: string) {
   const bits: string[] = [];
+  const host = await (await import("./node-host.server")).nodeHost();
   for (const name of ROOT_NAMES) {
     try {
-      bits.push(`# ${name}\n${(await readFile(path.join(folder, name), "utf8")).slice(0, 4000)}`);
+      bits.push(`# ${name}\n${(await host.fs.readFile(host.path.join(folder, name), "utf8")).slice(0, 4000)}`);
     } catch {
       /* missing */
     }

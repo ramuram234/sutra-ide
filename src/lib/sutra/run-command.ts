@@ -1,7 +1,3 @@
-import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import {
   ALLOWED_BINS,
@@ -15,11 +11,19 @@ import {
   tokenize,
 } from "./shell-safe";
 
-const ROOT =
-  process.env.SUTRA_WORKSPACE?.trim() ||
-  path.join(process.env.USERPROFILE || process.env.HOME || homedir() || tmpdir(), "Sutra", "workspace");
-
 export type ShellOs = "windows" | "macos";
+
+async function nodeHost() {
+  const m = await import("./node-host.server");
+  return m.nodeHost();
+}
+
+function workspaceRoot(os: typeof import("node:os"), path: typeof import("node:path")) {
+  return (
+    process.env.SUTRA_WORKSPACE?.trim() ||
+    path.join(process.env.USERPROFILE || process.env.HOME || os.homedir() || os.tmpdir(), "Sutra", "workspace")
+  );
+}
 
 function hostOs(): ShellOs {
   return process.platform === "win32" ? "windows" : "macos";
@@ -45,7 +49,8 @@ function spawnSpec(rawBin: string, rest: string[], os: ShellOs): { bin: string; 
   return { bin: rawBin, args: rest };
 }
 
-function spawnCapture(bin: string, args: string[], cwd: string, timeoutMs = 12_000) {
+async function spawnCapture(bin: string, args: string[], cwd: string, timeoutMs = 12_000) {
+  const { spawn } = await nodeHost();
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     const child = spawn(bin, args, {
       cwd,
@@ -85,10 +90,11 @@ function spawnCapture(bin: string, args: string[], cwd: string, timeoutMs = 12_0
 }
 
 async function cwdOf(root: string) {
+  const host = await nodeHost();
   try {
-    const raw = (await readFile(path.join(root, ".sutra-cwd"), "utf8")).trim();
+    const raw = (await host.fs.readFile(host.path.join(root, ".sutra-cwd"), "utf8")).trim();
     const rel = safeRel(raw) ?? ".";
-    const full = path.resolve(root, rel);
+    const full = host.path.resolve(root, rel);
     if (!contained(root, full)) return root;
     return full;
   } catch {
@@ -96,16 +102,19 @@ async function cwdOf(root: string) {
   }
 }
 
-export const desktopHealth = createServerFn({ method: "GET" }).handler(async () => ({
-  platform: process.platform,
-  workspace: ROOT,
-  node: process.version,
-  keys: {
-    XAI_API_KEY: Boolean(process.env.XAI_API_KEY?.trim()),
-    SUTRA_MODEL_API_KEY: Boolean(process.env.SUTRA_MODEL_API_KEY?.trim()),
-    OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY?.trim()),
-  },
-}));
+export const desktopHealth = createServerFn({ method: "GET" }).handler(async () => {
+  const host = await nodeHost();
+  return {
+    platform: process.platform,
+    workspace: workspaceRoot(host.os, host.path),
+    node: process.version,
+    keys: {
+      XAI_API_KEY: Boolean(process.env.XAI_API_KEY?.trim()),
+      SUTRA_MODEL_API_KEY: Boolean(process.env.SUTRA_MODEL_API_KEY?.trim()),
+      OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY?.trim()),
+    },
+  };
+});
 
 export const runShellCommand = createServerFn({ method: "POST" })
   .validator((input: { slug: string; command: string; os: ShellOs; files?: { path: string; code: string }[] }) => {
@@ -124,9 +133,11 @@ export const runShellCommand = createServerFn({ method: "POST" })
     return { slug, command, os, files };
   })
   .handler(async ({ data }) => {
+    const host = await nodeHost();
+    const { path } = host;
     const os = hostOs();
-    const root = path.join(ROOT, data.slug);
-    await mkdir(root, { recursive: true });
+    const root = path.join(workspaceRoot(host.os, path), data.slug);
+    await host.fs.mkdir(root, { recursive: true });
 
     if (data.command === "__init__" || data.files.length) {
       for (const f of data.files) {
@@ -134,8 +145,8 @@ export const runShellCommand = createServerFn({ method: "POST" })
         if (!rel || isProtectedRel(rel)) continue;
         const dest = path.join(root, rel);
         if (!contained(root, dest)) continue;
-        await mkdir(path.dirname(dest), { recursive: true });
-        await writeFile(dest, f.code, "utf8");
+        await host.fs.mkdir(path.dirname(dest), { recursive: true });
+        await host.fs.writeFile(dest, f.code, "utf8");
       }
       if (data.command === "__init__") {
         return {
@@ -172,7 +183,7 @@ export const runShellCommand = createServerFn({ method: "POST" })
       if (!contained(root, next)) {
         return { ok: false as const, stdout: "", stderr: "cd: outside project", code: 1, cwd: "." };
       }
-      await writeFile(path.join(root, ".sutra-cwd"), path.relative(root, next) || ".", "utf8");
+      await host.fs.writeFile(path.join(root, ".sutra-cwd"), path.relative(root, next) || ".", "utf8");
       return { ok: true as const, stdout: "", stderr: "", code: 0, cwd: path.relative(root, next) || "." };
     }
 

@@ -1,9 +1,7 @@
 /**
  * Debug Adapter Protocol (DAP) — same protocol VS Code uses.
- * Sutra talks DAP JSON to an adapter process (node, debugpy, delve, …).
- * In the browser preview we spawn Node inspect on the workspace file.
+ * Node spawn stays inside the server handler so the browser bundle never loads child_process.
  */
-import { spawn } from "node:child_process";
 import { createServerFn } from "@tanstack/react-start";
 import { registerFolder } from "./workspace-io";
 
@@ -17,6 +15,7 @@ export const debugLaunch = createServerFn({ method: "POST" })
     file: input.file.replaceAll("\\", "/"),
   }))
   .handler(async ({ data }) => {
+    const { spawn } = await (await import("./node-host.server")).nodeHost();
     const registered = await registerFolder({ data: { folder: data.folder } });
     const target = `${registered.folder}/${data.file}`.replaceAll("//", "/");
     const isWin = process.platform === "win32";
